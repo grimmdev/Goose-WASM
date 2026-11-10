@@ -32,8 +32,9 @@ else
     echo "Patch already applied or skipped."
 fi
 
-# Build version header and JIT symbols
-mkdir -p build/version
+# Build version header, JIT symbols, and builtin packages header
+mkdir -p build/version build/generated
+
 echo '#define GOOSE_VERSION "0.1.0-wasm"' > build/version/goose_version.h
 
 if [ ! -f "build/jit_symbols.inc" ]; then
@@ -41,10 +42,42 @@ if [ ! -f "build/jit_symbols.inc" ]; then
         | sed -n 's/.*\(gs_[A-Za-z0-9_]*\)(.*/GS_JIT_SYMBOL(\1)/p' > build/jit_symbols.inc || true
 fi
 
+cat << 'EOF' > build/generated/builtin_packages.h
+#pragma once
+
+namespace goose {
+
+inline const char *blessed_table = R"GSBL(# The blessed packages (docs/design/packages.md, section 4.5): what a naked `import
+# name;` of these names resolves to when neither a file of the importing
+# package nor a package the root declared has that name. Read by the
+# compiler (embedded at its build) and by cmake/package.cmake, which builds
+# the ones GOOSE_BUILTIN_LIBS names into the compiler.
+#
+# import-name  package  source                ref
+#   A source is a path relative to this tree (while a package lives in it),
+#   or a git repository as a root file would write it, with its ref after @.
+physics        physics  github.com/aardappel/goose_physics  v1
+gfx            gfx      github.com/aardappel/goose_gfx      v1
+audio          gfx      github.com/aardappel/goose_gfx      v1
+ui             gfx      github.com/aardappel/goose_gfx      v1
+)GSBL";
+
+extern "C" const goose_symbol *goose_symbols_physics(void);
+extern "C" const goose_symbol *goose_symbols_gfx(void);
+
+inline const BuiltinPackage builtin_packages[] = {
+    { "physics", goose_symbols_physics, "", GOOSE_BUILTIN_RSPDIR_physics },
+    { "gfx", goose_symbols_gfx, "", GOOSE_BUILTIN_RSPDIR_gfx },
+    { nullptr, nullptr, nullptr, nullptr },
+};
+
+}  // namespace goose
+EOF
+
 # Compile objects
 echo "Compiling C++ sources with em++..."
 em++ -std=c++20 -O2 -fexceptions -c src/main.cpp \
-    -I src -I build/version -I third_party/subprocess -I third_party/tinycc -I build -I build/tcc/api \
+    -I src -I build/version -I third_party/subprocess -I third_party/tinycc -I build -I build/tcc/api -I build/generated \
     -DGOOSE_BUILTIN_RSPDIR_physics=nullptr \
     -DGOOSE_BUILTIN_RSPDIR_gfx=nullptr \
     -o build/main.o
