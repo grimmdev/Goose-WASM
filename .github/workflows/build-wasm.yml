@@ -1,0 +1,85 @@
+name: Build & Publish Goose WebAssembly
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish package to GitHub Packages'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-publish:
+    name: Build & Publish Goose WASM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository with Submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.70
+
+      - name: Verify Emscripten Installation
+        run: |
+          emcc --version
+          em++ --version
+
+      - name: Make Build Script Executable
+        run: chmod +x scripts/build.sh
+
+      - name: Build WebAssembly Module
+        run: ./scripts/build.sh goose
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@grimmdev'
+
+      - name: Install Build Dependencies
+        run: npm install --ignore-scripts
+
+      - name: Bundle TypeScript API & WebGL Renderer
+        run: node scripts/bundle.cjs
+
+      - name: Run Package Integration Tests
+        run: npm test
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: goose-wasm-dist
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GitHub Packages
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

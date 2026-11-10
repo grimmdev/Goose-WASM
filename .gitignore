@@ -1,0 +1,18 @@
+# Output directory
+dist/
+
+# Build artifacts
+build/
+*.o
+*.obj
+*.wasm
+*.map
+
+# Node dependencies
+node_modules/
+package-lock.json
+
+# Environment / OS
+.DS_Store
+Thumbs.db
+

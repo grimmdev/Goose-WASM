@@ -1,0 +1,60 @@
+{
+  "name": "@grimmdev/goose-wasm",
+  "version": "0.1.0",
+  "description": "Client-side WebAssembly compiler, linter, transpiler, and real-time WebGL renderer for the Goose programming language",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./renderer": {
+      "types": "./dist/renderer.d.ts",
+      "import": "./dist/renderer.mjs",
+      "require": "./dist/renderer.js",
+      "default": "./dist/renderer.js"
+    },
+    "./linter": {
+      "types": "./dist/goose_linter.d.ts",
+      "default": "./dist/goose_linter.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/grimmdev/Goose-WASM.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build:wasm": "bash scripts/build.sh",
+    "build:ts": "node scripts/bundle.cjs",
+    "build": "npm run build:wasm && npm run build:ts",
+    "test": "node scripts/test.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "goose",
+    "compiler",
+    "wasm",
+    "webassembly",
+    "transpiler",
+    "linter",
+    "webgl",
+    "renderer",
+    "shader"
+  ],
+  "author": "GrimmDev",
+  "license": "MIT"
+}
