@@ -32,14 +32,19 @@ else
     echo "Patch already applied or skipped."
 fi
 
-# Build version header
+# Build version header and JIT symbols
 mkdir -p build/version
 echo '#define GOOSE_VERSION "0.1.0-wasm"' > build/version/goose_version.h
+
+if [ ! -f "build/jit_symbols.inc" ]; then
+    grep -h "^GS_API " src/runtime/runtime.h src/runtime/runtime_ext.h 2>/dev/null \
+        | sed -n 's/.*\(gs_[A-Za-z0-9_]*\)(.*/GS_JIT_SYMBOL(\1)/p' > build/jit_symbols.inc || true
+fi
 
 # Compile objects
 echo "Compiling C++ sources with em++..."
 em++ -std=c++20 -O2 -fexceptions -c src/main.cpp \
-    -I src -I build/version -I third_party/subprocess -I build \
+    -I src -I build/version -I third_party/subprocess -I third_party/tinycc -I build -I build/tcc/api \
     -DGOOSE_BUILTIN_RSPDIR_physics=nullptr \
     -DGOOSE_BUILTIN_RSPDIR_gfx=nullptr \
     -o build/main.o
