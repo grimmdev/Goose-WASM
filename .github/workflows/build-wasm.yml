@@ -1,102 +1,211 @@
-name: Build & Publish Goose WebAssembly
+name: Manual Goose WebAssembly Release
 
+# This is the only entrypoint. Nothing runs on push, tag, PR or release events.
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Publish package to GitHub Packages'
-        required: false
-        type: boolean
-        default: false
+      branch:
+        description: 'Source branch to build (for example main or feature/web)'
+        required: true
+        type: string
+        default: main
+      version:
+        description: 'Release version without v (for example 1.0.0)'
+        required: true
+        type: string
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+
+# Do not cancel a release midway through package publication.
+concurrency:
+  group: goose-release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-publish:
-    name: Build & Publish Goose WASM
-    # Pin the image so ubuntu-latest cannot move this build to a new distro.
+  build:
+    name: Build and test selected branch
     runs-on: ubuntu-24.04
-
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
     steps:
-      - name: Checkout Repository with Submodules
+      - name: Validate requested branch and version
+        id: version
+        env:
+          SOURCE_BRANCH: ${{ inputs.branch }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        run: |
+          git check-ref-format "refs/heads/$SOURCE_BRANCH"
+          node <<'JS'
+          const fs = require('node:fs');
+          const version = process.env.PACKAGE_VERSION;
+          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+            throw new Error('Enter a stable version without v, such as 1.0.0.');
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ntag=v${version}\n`);
+          JS
+
+      - name: Checkout selected branch and pinned submodules
         uses: actions/checkout@v4
         with:
+          ref: refs/heads/${{ inputs.branch }}
           submodules: recursive
           fetch-depth: 1
+
+      - name: Record exact source commit and reject conflicting tags
+        id: source
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          source_sha="$(git rev-parse HEAD)"
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          remote_tag="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
+          if [ -n "$remote_tag" ]; then
+            git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            tag_sha="$(git rev-parse "$RELEASE_TAG^{commit}")"
+            if [ "$tag_sha" != "$source_sha" ]; then
+              echo "::error::Tag $RELEASE_TAG already points to another commit. Choose a new version."
+              exit 1
+            fi
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install build dependencies
+        run: npm install --ignore-scripts
+
+      - name: Set requested package version without committing source changes
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: npm version "$PACKAGE_VERSION" --no-git-tag-version --ignore-scripts --allow-same-version
 
       - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.70
 
-      - name: Verify Emscripten Installation
+      - name: Verify Emscripten
         run: |
           emcc --version
           em++ --version
 
-      - name: Make Build Script Executable
-        run: chmod +x scripts/build.sh
+      - name: Build WebAssembly compiler
+        run: bash scripts/build.sh goose
 
-      - name: Build WebAssembly Module
-        run: ./scripts/build.sh goose
+      - name: Build native web libraries
+        run: node scripts/build-web-libs.cjs
 
-      - name: Setup Node.js
+      - name: Bundle TypeScript API and worker runtime
+        run: node scripts/bundle.cjs
+
+      - name: Build pinned shader translator
+        run: npm run build:shader-tools
+
+      - name: Build demos and regression fixtures
+        run: npm run build:demos && npm run build:browser-probes && npm run build:runner-fixtures
+
+      - name: Install Chromium
+        # Keep the working fix: no apt-dependent --with-deps installation.
+        run: npx --no-install playwright install chromium
+
+      - name: Run integration and acceptance tests
+        run: npm test
+
+      - name: Stage static Pages site without Jekyll or submodule source
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_BRANCH: ${{ inputs.branch }}
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import json, shutil, os
+          out = Path('_site')
+          if out.exists():
+              shutil.rmtree(out)
+          out.mkdir()
+          shutil.copytree('dist', out / 'dist')
+          shutil.copytree('examples', out / 'examples')
+          for demo in ['g3_cube', 'g4_ui', 'g5_physics', 'g6_planar2d', 'g7_minecraft', 'g8_doom']:
+              target = out / 'build' / demo
+              target.mkdir(parents=True)
+              for filename in ['game.mjs', 'game.wasm']:
+                  shutil.copy2(Path('build') / demo / filename, target / filename)
+          (out / 'index.html').write_text('<!doctype html><meta charset="utf-8"><title>Goose WASM</title><meta http-equiv="refresh" content="0;url=./examples/"><a href="./examples/">Open Goose WASM demos</a>\n')
+          (out / '.nojekyll').touch()
+          (out / 'version.json').write_text(json.dumps({'tag': os.environ['RELEASE_TAG'], 'version': os.environ['RELEASE_TAG'][1:], 'branch': os.environ['SOURCE_BRANCH'], 'commit': os.environ['RELEASE_SHA']}) + '\n')
+          for required in ['dist/runner.mjs', 'dist/compiled.worker.mjs', 'dist/project-store.mjs', 'examples/index.html', 'examples/demo.mjs', 'examples/virtual-input.html']:
+              if not (out / required).is_file():
+                  raise RuntimeError('Missing Pages asset: ' + required)
+          PY
+
+      - name: Upload tested Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Pack versioned release assets
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          mkdir -p release
+          npm pack --pack-destination release
+          tar -czf "release/goose-wasm-dist-${RELEASE_TAG}.tar.gz" dist
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: goose-wasm-release-${{ steps.version.outputs.version }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish requested version and GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Download tested release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: goose-wasm-release-${{ needs.build.outputs.version }}
+          path: release
+
+      - name: Setup GitHub Packages authentication
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: 'https://npm.pkg.github.com'
+          registry-url: https://npm.pkg.github.com
           scope: '@grimmdev'
 
-      - name: Install Build Dependencies
-        run: npm install --ignore-scripts
-
-      - name: Build Native Web Static Libraries
-        run: |
-          node scripts/build-web-libs.cjs
-
-      - name: Bundle TypeScript API & WebGL Renderer
-        run: node scripts/bundle.cjs
-
-      - name: Build Pinned Shader Translator
-        run: npm run build:shader-tools
-
-      - name: Build Official Goose Demos
-        run: npm run build:demos && npm run build:browser-probes
-
-      - name: Install Chromium for Real WebGL Tests
-        # GitHub-hosted Ubuntu provides Chromium's runtime libraries.
-        # Do not use --with-deps here: it invokes apt for additional packages
-        # and caused the Ubuntu mirror DNS failure in the supplied log.
-        run: npx --no-install playwright install chromium
-
-      - name: Run Package Integration & Acceptance Tests
-        run: npm test
-
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: goose-wasm-dist
-          path: dist/*
-          if-no-files-found: error
-
-      - name: Attach to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish to GitHub Packages
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
-        run: npm publish
+      - name: Publish exact package built from the selected commit
+        run: npm publish release/grimmdev-goose-wasm-*.tgz
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create or update versioned GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          target_commitish: ${{ needs.build.outputs.sha }}
+          files: release/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+  pages:
+    name: Deploy tested demos
+    needs: build
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy-pages.yml
