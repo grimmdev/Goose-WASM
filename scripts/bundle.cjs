@@ -64,13 +64,20 @@ esbuild.buildSync({
 
 // Generate TypeScript declarations
 console.log("Generating TypeScript declaration files...");
-try {
-  execSync("bunx tsc", { cwd: rootDir, stdio: "inherit" });
-} catch {
+const tscBin = path.join(
+  rootDir,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "tsc.cmd" : "tsc"
+);
+
+if (fs.existsSync(tscBin)) {
+  execSync(`"${tscBin}"`, { cwd: rootDir, stdio: "inherit" });
+} else {
   try {
-    execSync("npx --yes typescript tsc", { cwd: rootDir, stdio: "inherit" });
-  } catch (err) {
-    console.warn("TypeScript declaration generation warning:", err.message);
+    execSync("bunx tsc", { cwd: rootDir, stdio: "inherit" });
+  } catch {
+    execSync("npx tsc", { cwd: rootDir, stdio: "inherit" });
   }
 }
 

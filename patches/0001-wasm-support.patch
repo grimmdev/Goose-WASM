@@ -1,22 +1,11 @@
-From: Goose WASM Builder <builder@honk.io>
-Subject: [PATCH] Add Emscripten WebAssembly build target
-
-Enables building Goose as a WebAssembly module for Web, Node.js, and mobile
-webviews with an embedded standard library, JSON diagnostics, and transpilation.
----
- CMakeLists.txt | 35 +++++++++++++++++++++++++++++++++++
- 1 file changed, 35 insertions(+)
-
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 1000000..2000000 100644
+index 452b45b7..73e790fd 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -107,6 +107,11 @@ target_include_directories(goose PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/version")
- find_package(Threads REQUIRED)
- target_link_libraries(goose PRIVATE Threads::Threads)
-+# The library the process runner (process.cpp) is built on.
+@@ -109,6 +109,14 @@ target_link_libraries(goose PRIVATE Threads::Threads)
+ # The library the process runner (process.cpp) is built on.
  target_include_directories(goose PRIVATE third_party/subprocess)
-+
+ 
 +if(EMSCRIPTEN)
 +    target_sources(goose PRIVATE src/stubs.c)
 +    target_compile_definitions(goose PRIVATE
@@ -24,11 +13,14 @@ index 1000000..2000000 100644
 +        GOOSE_BUILTIN_RSPDIR_gfx=nullptr
 +    )
 +endif()
- 
++
  # A program run in-process runs on the main thread (main.cpp), whose stack the
-@@ -144,6 +149,35 @@ target_link_libraries(goose PRIVATE goose_shaderc)
+ # executable sets: 64 MB reserved, as for the compile thread, where Windows
+ # would give it 1 MB and macOS 8 MB. Only what a program's depth reaches is
+@@ -142,11 +150,31 @@ else()
+ endif()
+ target_link_libraries(goose PRIVATE goose_shaderc)
  
-+# In WebAssembly, JIT execution via TinyCC is replaced by the stub interface
 +if(EMSCRIPTEN)
 +    set(WASM_FLAGS
 +        "-sALLOW_MEMORY_GROWTH"
@@ -54,5 +46,6 @@ index 1000000..2000000 100644
  target_link_libraries(goose PRIVATE libtcc)
  add_dependencies(goose tcc_runtime)
 +endif()
--- 
-
+ # A packager sets this to where it installs tcclib/, so the binary names no
+ # build directory. A tcclib/ beside the compiler still wins (src/jit.h).
+ set(GOOSE_TCC_LIB_PATH "${TCC_STAGE}" CACHE PATH "TinyCC's runtime directory")

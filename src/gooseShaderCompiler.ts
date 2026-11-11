@@ -44,7 +44,17 @@ function normalizeGLSL(src: string, isVertex: boolean): string {
     s = s.replace(/(?:layout\s*\([^)]*\)\s*)?\bout\s+vec4\s+([a-zA-Z0-9_]+)\s*;/g, (_m, name) => `#define ${name} gl_FragColor`);
   }
 
-  if (!s.includes("precision")) {
+  // Preserve #version as first line if present
+  const versionMatch = s.match(/^\s*(#version[^\n]*\n?)/);
+  if (versionMatch) {
+    const versionLine = versionMatch[1];
+    s = s.slice(versionMatch[0].length);
+    if (!s.includes("precision")) {
+      s = `${versionLine}precision highp float;\n${s}`;
+    } else {
+      s = `${versionLine}${s}`;
+    }
+  } else if (!s.includes("precision")) {
     s = "precision highp float;\n" + s;
   }
   return s;
@@ -126,10 +136,17 @@ function translateGooseBody(body: string, isMapScene: boolean = false): string {
 
   // Return translation
   if (isMapScene) {
-    // map_scene returns (distance, materialId) -> GLSL vec2(d, mat)
-    res = res.replace(/return\s+([^,;]+)\s*,\s*([^;]+);/g, "return vec2($1, float($2));");
-    // In case single return
-    res = res.replace(/return\s+([^;,]+);/g, "return vec2($1, 0.0);");
+    if (/return\s*\[/.test(res)) {
+      res = res.replace(/return\s*\[\s*([^,;]+)\s*,\s*([^;\]]+)\s*\]\s*;/g, "return vec2($1, float($2));");
+    } else if (/return\s+[^,;]+\s*,\s*[^;]+;/.test(res)) {
+      res = res.replace(/return\s+([^,;]+)\s*,\s*([^;]+);/g, "return vec2($1, float($2));");
+    } else {
+      res = res.replace(/return\s+([^;,]+);/g, (_m, val) => {
+        const trimmed = val.trim();
+        if (trimmed.startsWith("vec2")) return `return ${trimmed};`;
+        return `return vec2(${trimmed}, 0.0);`;
+      });
+    }
   }
 
   // If condition parentheses: if cond { -> if (cond) {
@@ -193,9 +210,14 @@ export function compileGooseToShader(
       };
     }
 
+    // Strip comments to prevent extracting commented-out shaders
+    const cleanSource = source
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+
     // Extract Vertex Shader if embedded in Goose source (embed_shader("vert", ...))
     let vertexShader: string | undefined = undefined;
-    const vsMatch = source.match(/embed_shader\s*\(\s*["'](?:vert|vertex)["']\s*,\s*(?:[a-zA-Z0-9_]+\s*,\s*)?(?:"""([\s\S]*?)"""|"([^"]*)"|'([^']*)')\s*\)/);
+    const vsMatch = cleanSource.match(/embed_shader\s*\(\s*["'](?:vert|vertex)["']\s*,\s*(?:[a-zA-Z0-9_]+\s*,\s*)?(?:"""([\s\S]*?)"""|"([^"]*)"|'([^']*)')\s*\)/);
     if (vsMatch) {
       const rawVs = (vsMatch[1] || vsMatch[2] || vsMatch[3] || "").trim();
       if (rawVs.length > 0) {
@@ -204,7 +226,7 @@ export function compileGooseToShader(
     }
 
     // Embedded Fragment Shader in Goose source code (embed_shader("frag", ...))
-    const embedMatch = source.match(/embed_shader\s*\(\s*["'](?:frag|fragment)["']\s*,\s*(?:[a-zA-Z0-9_]+\s*,\s*)?(?:"""([\s\S]*?)"""|"([^"]*)"|'([^']*)')\s*\)/);
+    const embedMatch = cleanSource.match(/embed_shader\s*\(\s*["'](?:frag|fragment)["']\s*,\s*(?:[a-zA-Z0-9_]+\s*,\s*)?(?:"""([\s\S]*?)"""|"([^"]*)"|'([^']*)')\s*\)/);
     if (embedMatch) {
       const rawFs = (embedMatch[1] || embedMatch[2] || embedMatch[3] || "").trim();
       if (rawFs.length > 0) {
@@ -233,7 +255,7 @@ export function compileGooseToShader(
     }
 
     // Also support multi-line shader string: let shader = """ ... """
-    const stringShaderMatch = source.match(/(?:let|var)\s+[a-zA-Z0-9_]*shader[a-zA-Z0-9_]*\s*=\s*"""([\s\S]*?)"""/i);
+    const stringShaderMatch = cleanSource.match(/(?:let|var)\s+[a-zA-Z0-9_]*shader[a-zA-Z0-9_]*\s*=\s*"""([\s\S]*?)"""/i);
     if (stringShaderMatch && stringShaderMatch[1].trim().length > 0) {
       const frag = normalizeGLSL(stringShaderMatch[1].trim(), false);
       return {

@@ -4,6 +4,8 @@ const assert = require("assert");
 console.log("=== Testing Goose WASM & Renderer Package ===");
 
 const { compileGooseToShader } = require("../dist/renderer.js");
+const { compileGoose, createGooseGameRuntime } = require("../dist/index.js");
+
 console.log("1. Testing WebGL shader compiler...");
 
 // Test A: Procedural Goose 3D SDF
@@ -19,6 +21,7 @@ const shaderRes = compileGooseToShader(sampleGoose3D);
 assert.strictEqual(shaderRes.success, true, "Procedural 3D compilation should succeed");
 assert.ok(shaderRes.fragmentShader.includes("precision"), "Shader should include precision statement");
 assert.ok(shaderRes.fragmentShader.includes("map_scene"), "Shader should include compiled scene function");
+assert.ok(shaderRes.fragmentShader.includes("return vec2(d, float(1.0));"), "Clean GLSL return vec2 translation");
 console.log("✓ Procedural 3D Goose shader compiled (length: " + shaderRes.fragmentShader.length + " chars)");
 
 // Test B: Separate Shader File (e.g. shader.frag)
@@ -87,22 +90,96 @@ assert.strictEqual(rawRes.success, true, "Raw GLSL compilation should succeed");
 assert.strictEqual(rawRes.sourceType, "raw", "sourceType should be raw");
 console.log("✓ Raw GLSL fragment shader compiled successfully");
 
-// Test E: Goose WASM compiler module
+// Test E: Interactive Game Engine Runtime
+console.log("2. Testing Goose Interactive Game Engine Runtime...");
+const gameSource = `
+import std;
+import gfx;
+
+var x: f32 = 0.0;
+var y: f32 = 0.0;
+
+fn dpad(dx: i64, dy: i64) {
+    if dx > 0 { x = x + 1.0; }
+    if dy > 0 { y = y + 1.0; }
+}
+
+fn tick(dt: f32) {
+    if gfx::key_down("w") {
+        y = y + 10.0 * dt;
+    }
+}
+`;
+const inputState = {
+  keysDown: new Set(),
+  keysPressed: new Set(),
+  keysReleased: new Set(),
+  mouseX: 0, mouseY: 0,
+  mouseDown: [false, false, false],
+  mousePressed: [false, false, false],
+  mouseReleased: [false, false, false],
+};
+const gameRuntime = createGooseGameRuntime(gameSource, { inputState });
+assert.strictEqual(gameRuntime.success, true, "Game runtime should initialize successfully");
+const initialVars = gameRuntime.getVariables();
+assert.strictEqual(initialVars.x, 0.0, "Initial x should be 0");
+assert.strictEqual(initialVars.y, 0.0, "Initial y should be 0");
+
+// Test dpad mutation
+gameRuntime.dpad(1, 1);
+const dpadVars = gameRuntime.getVariables();
+assert.strictEqual(dpadVars.x, 1.0, "Dpad should advance x to 1.0");
+assert.strictEqual(dpadVars.y, 1.0, "Dpad should advance y to 1.0");
+
+// Test keyboard input and tick step
+inputState.keysDown.add("w");
+gameRuntime.step(0.1, { dt: 0.1, time: 0.1, dpad: [0, 0], buttons: [0,0,0,0], sliders: [0,0,0,0], touch: [0,0,0,0] });
+const tickVars = gameRuntime.getVariables();
+assert.ok(tickVars.y > 1.5, "Holding W should advance y during tick(dt)");
+console.log("✓ Game Engine Runtime and GFX input translation verified");
+
+// Test F: Goose WebAssembly Compiler & Multi-file Compilation
 const linterDist = path.join(__dirname, "..", "dist", "goose_linter.js");
 const fs = require("fs");
 if (fs.existsSync(linterDist)) {
-  console.log("2. Testing Goose WebAssembly compiler module...");
+  console.log("3. Testing Goose WebAssembly compiler module...");
   const createLinter = require(linterDist);
-  createLinter({ noInitialRun: true }).then((mod) => {
+  createLinter({ noInitialRun: true }).then(async (mod) => {
     assert.ok(mod.FS, "FS should be exported");
     assert.ok(typeof mod.callMain === "function", "callMain should be exported");
-    mod.FS.writeFile("/test.goose", 'import std;\nfn main() { print("Goose WASM OK"); }\n');
-    let stdout = "";
-    mod.print = (t) => { stdout += t + "\n"; };
-    const code = mod.callMain(["check", "/test.goose", "--stdlib", "/stdlib", "--diagnostics", "json"]);
-    console.log("✓ WASM exit code:", code);
-    console.log("✓ Diagnostics:", stdout.trim() || "[]");
-    console.log("=== All Tests Passed! ===");
+
+    // Test F1: compileGoose valid program with C transpilation
+    const validRes = await compileGoose(mod, 'import std;\nfn main() { print("Goose WASM OK"); }\n', { transpile: true });
+    assert.strictEqual(validRes.success, true, "Valid program should succeed");
+    assert.strictEqual(validRes.diagnostics.length, 0, "No diagnostics on valid program");
+    assert.ok(validRes.transpiledC.length > 50, "C code should be emitted");
+    assert.strictEqual(validRes.stages.check.success, true, "Check stage should succeed");
+    assert.strictEqual(validRes.stages.transpile.success, true, "Transpile stage should succeed");
+    console.log("✓ Single-file compileGoose with C generation verified");
+
+    // Test F2: compileGoose multi-file project snapshot
+    const multiRes = await compileGoose(mod, 'import std;\nimport helper;\nfn main() { print(answer()); }\n', {
+      transpile: true,
+      entryFile: "/multi.goose",
+      files: {
+        "helper.goose": 'fn answer() -> i64 { 42 }\n',
+      },
+    });
+    assert.strictEqual(multiRes.success, true, "Multi-file project compilation should succeed");
+    assert.strictEqual(multiRes.diagnostics.length, 0, "No diagnostics on multi-file project");
+    console.log("✓ Multi-file project snapshot compilation verified");
+
+    // Test F3: compileGoose syntax error handling
+    const errRes = await compileGoose(mod, 'import std;\nfn main() { INVALID SYNTAX !!! }\n');
+    console.log("errRes diagnostics:", errRes.diagnostics);
+    console.log("errRes stdout:", JSON.stringify(errRes.stdout));
+    console.log("errRes stderr:", JSON.stringify(errRes.stderr));
+    assert.strictEqual(errRes.success, false, "Syntax error program should fail");
+    assert.ok(errRes.diagnostics.length > 0, "Diagnostics should capture syntax error");
+    assert.strictEqual(errRes.stages.check.success, false, "Check stage should report failure");
+    console.log("✓ Error diagnostics and stage failure reporting verified");
+
+    console.log("=== All Tests Passed Successfully! ===");
   }).catch((err) => {
     console.error("Linter test error:", err);
     process.exit(1);

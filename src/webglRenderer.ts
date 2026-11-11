@@ -1,6 +1,14 @@
 /**
- * Lightweight WebGL 1.0 / 2.0 Runner for Live Goose Shaders
+ * Lightweight WebGL 1.0 / 2.0 Runner for Live Goose Shaders & 3D Geometry
  */
+
+export interface ActiveUniformInfo {
+  name: string;
+  cleanName: string;
+  location: WebGLUniformLocation;
+  type: number;
+  size: number;
+}
 
 export interface WebGLContextHandle {
   gl: WebGLRenderingContext;
@@ -9,6 +17,7 @@ export interface WebGLContextHandle {
   cubeVbo: WebGLBuffer | null;
   cubeIbo: WebGLBuffer | null;
   isMeshMode: boolean;
+  activeUniforms: ActiveUniformInfo[];
   uResolution: WebGLUniformLocation | null;
   uTime: WebGLUniformLocation | null;
   uCamRot: WebGLUniformLocation | null;
@@ -20,6 +29,10 @@ export interface WebGLContextHandle {
   uScore: WebGLUniformLocation | null;
   uPipe1: WebGLUniformLocation | null;
   uPipe2: WebGLUniformLocation | null;
+  uTouch: WebGLUniformLocation | null;
+  uDpad: WebGLUniformLocation | null;
+  uButtons: WebGLUniformLocation | null;
+  uSliders: WebGLUniformLocation | null;
   aPos: number;
   aNormal: number;
   aColor: number;
@@ -259,6 +272,7 @@ export function initWebGLContext(canvas: HTMLCanvasElement): WebGLContextHandle 
     cubeVbo,
     cubeIbo,
     isMeshMode: false,
+    activeUniforms: [],
     uResolution: null,
     uTime: null,
     uCamRot: null,
@@ -270,6 +284,10 @@ export function initWebGLContext(canvas: HTMLCanvasElement): WebGLContextHandle 
     uScore: null,
     uPipe1: null,
     uPipe2: null,
+    uTouch: null,
+    uDpad: null,
+    uButtons: null,
+    uSliders: null,
     aPos: -1,
     aNormal: -1,
     aColor: -1,
@@ -343,7 +361,7 @@ export function updateWebGLProgram(
   handle.uViewProj = gl.getUniformLocation(prog, "view_proj") || gl.getUniformLocation(prog, "u_view_proj") || gl.getUniformLocation(prog, "viewProj") || gl.getUniformLocation(prog, "uViewProj");
 
   // Determine whether this is a 3D Polygon Mesh (like Official 27_gfx_cube) or 2D Quad (raymarching/canvas)
-  handle.isMeshMode = aNormal !== -1 || aColor !== -1 || handle.uModel !== null || handle.uViewProj !== null;
+  handle.isMeshMode = (handle.uModel !== null || handle.uViewProj !== null) && aNormal !== -1 && aColor !== -1;
 
   // Cache standard uniform locations
   handle.uResolution = gl.getUniformLocation(prog, "u_resolution");
@@ -355,43 +373,352 @@ export function updateWebGLProgram(
   handle.uScore = gl.getUniformLocation(prog, "u_score");
   handle.uPipe1 = gl.getUniformLocation(prog, "u_pipe1");
   handle.uPipe2 = gl.getUniformLocation(prog, "u_pipe2");
+  handle.uTouch = gl.getUniformLocation(prog, "u_touch") || gl.getUniformLocation(prog, "u_mouse") || gl.getUniformLocation(prog, "iMouse");
+  handle.uDpad = gl.getUniformLocation(prog, "u_dpad") || gl.getUniformLocation(prog, "u_joystick");
+  handle.uButtons = gl.getUniformLocation(prog, "u_buttons");
+  handle.uSliders = gl.getUniformLocation(prog, "u_sliders");
+
+  // Inspect and reflect ALL active uniforms declared in user shader
+  const numUniforms = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS) || 0;
+  const activeUniforms: ActiveUniformInfo[] = [];
+  for (let i = 0; i < numUniforms; i++) {
+    const info = gl.getActiveUniform(prog, i);
+    if (!info) continue;
+    const cleanName = info.name.replace(/\[0\]$/, "");
+    const loc = gl.getUniformLocation(prog, info.name);
+    if (loc !== null) {
+      activeUniforms.push({
+        name: info.name,
+        cleanName,
+        location: loc,
+        type: info.type,
+        size: info.size,
+      });
+    }
+  }
+  handle.activeUniforms = activeUniforms;
 
   return { success: true };
 }
 
+function toFloatArray(val: any, len: number): number[] {
+  if (Array.isArray(val)) {
+    const res = val.map(Number);
+    while (res.length < len) res.push(0);
+    return res.slice(0, len);
+  }
+  if (typeof val === "object" && val !== null) {
+    if ("x" in val || "y" in val) {
+      return [
+        Number(val.x) || 0,
+        Number(val.y) || 0,
+        Number(val.z) || 0,
+        Number(val.w) || 0,
+      ].slice(0, len);
+    }
+    if ("r" in val || "g" in val) {
+      return [
+        Number(val.r) || 0,
+        Number(val.g) || 0,
+        Number(val.b) || 0,
+        Number(val.a) || 0,
+      ].slice(0, len);
+    }
+    const nums = Object.values(val)
+      .map(Number)
+      .filter((n) => !isNaN(n));
+    while (nums.length < len) nums.push(0);
+    return nums.slice(0, len);
+  }
+  const n = Number(val) || 0;
+  const out = new Array(len).fill(0);
+  out[0] = n;
+  return out;
+}
+
+function toIntArray(val: any, len: number): number[] {
+  return toFloatArray(val, len).map((f) => f | 0);
+}
+
+function applyUniform(
+  gl: WebGLRenderingContext,
+  loc: WebGLUniformLocation,
+  type: number,
+  val: any
+) {
+  if (val === undefined || val === null) return;
+
+  switch (type) {
+    case 0x1406: // gl.FLOAT
+      gl.uniform1f(loc, Number(val) || 0);
+      break;
+
+    case 0x8b50: { // gl.FLOAT_VEC2
+      const v = toFloatArray(val, 2);
+      gl.uniform2f(loc, v[0], v[1]);
+      break;
+    }
+
+    case 0x8b51: { // gl.FLOAT_VEC3
+      const v = toFloatArray(val, 3);
+      gl.uniform3f(loc, v[0], v[1], v[2]);
+      break;
+    }
+
+    case 0x8b52: { // gl.FLOAT_VEC4
+      const v = toFloatArray(val, 4);
+      gl.uniform4f(loc, v[0], v[1], v[2], v[3]);
+      break;
+    }
+
+    case 0x1404: // gl.INT
+      gl.uniform1i(loc, Number(val) | 0);
+      break;
+
+    case 0x8b53: { // gl.INT_VEC2
+      const v = toIntArray(val, 2);
+      gl.uniform2i(loc, v[0], v[1]);
+      break;
+    }
+
+    case 0x8b54: { // gl.INT_VEC3
+      const v = toIntArray(val, 3);
+      gl.uniform3i(loc, v[0], v[1], v[2]);
+      break;
+    }
+
+    case 0x8b55: { // gl.INT_VEC4
+      const v = toIntArray(val, 4);
+      gl.uniform4i(loc, v[0], v[1], v[2], v[3]);
+      break;
+    }
+
+    case 0x8b56: // gl.BOOL
+      gl.uniform1i(loc, val ? 1 : 0);
+      break;
+
+    case 0x8b57: { // gl.BOOL_VEC2
+      const v = toIntArray(val, 2);
+      gl.uniform2i(loc, v[0] ? 1 : 0, v[1] ? 1 : 0);
+      break;
+    }
+
+    case 0x8b58: { // gl.BOOL_VEC3
+      const v = toIntArray(val, 3);
+      gl.uniform3i(loc, v[0] ? 1 : 0, v[1] ? 1 : 0, v[2] ? 1 : 0);
+      break;
+    }
+
+    case 0x8b59: { // gl.BOOL_VEC4
+      const v = toIntArray(val, 4);
+      gl.uniform4i(loc, v[0] ? 1 : 0, v[1] ? 1 : 0, v[2] ? 1 : 0, v[3] ? 1 : 0);
+      break;
+    }
+
+    case 0x8b5a: // gl.FLOAT_MAT2
+      if (val instanceof Float32Array || Array.isArray(val)) gl.uniformMatrix2fv(loc, false, val);
+      break;
+    case 0x8b5b: // gl.FLOAT_MAT3
+      if (val instanceof Float32Array || Array.isArray(val)) gl.uniformMatrix3fv(loc, false, val);
+      break;
+    case 0x8b5c: // gl.FLOAT_MAT4
+      if (val instanceof Float32Array || Array.isArray(val)) gl.uniformMatrix4fv(loc, false, val);
+      break;
+  }
+}
+
+export function resolveUniformValue(
+  name: string,
+  userVars: Record<string, any>,
+  systemVars: Record<string, any>
+): any {
+  // 1. Direct user variable match (user Goose simulation takes precedence)
+  if (name in userVars && userVars[name] !== undefined) return userVars[name];
+
+  // 2. Strip leading "u_" if present in user variables (e.g. shader has "u_gravity", user declared "gravity")
+  if (name.startsWith("u_")) {
+    const stripped = name.slice(2);
+    if (stripped in userVars && userVars[stripped] !== undefined) return userVars[stripped];
+  }
+
+  // 3. Add leading "u_" if present in user variables (e.g. shader has "score", user declared "u_score")
+  const withPrefix = "u_" + name;
+  if (withPrefix in userVars && userVars[withPrefix] !== undefined) return userVars[withPrefix];
+
+  // 4. System variable match (u_resolution, u_time, touch, or fallback viewport camera)
+  if (name in systemVars && systemVars[name] !== undefined) return systemVars[name];
+
+  // 5. Case-insensitive lookup (e.g. shader has "u_gravity" or "gravity", user declared "GRAVITY")
+  const lowerName = name.toLowerCase();
+  const lowerStripped = lowerName.startsWith("u_") ? lowerName.slice(2) : lowerName;
+  for (const key of Object.keys(userVars)) {
+    const lowerKey = key.toLowerCase();
+    const lowerKeyStripped = lowerKey.startsWith("u_") ? lowerKey.slice(2) : lowerKey;
+    if (lowerKey === lowerName || lowerKeyStripped === lowerStripped) {
+      return userVars[key];
+    }
+  }
+
+  // 6. Dot / struct property lookup: e.g. uniform "bird_y" or "u_bird_y" -> userVars["bird"]?.y
+  const parts = lowerStripped.split("_");
+  if (parts.length >= 2) {
+    const structName = parts[0];
+    const fieldName = parts.slice(1).join("_");
+    for (const key of Object.keys(userVars)) {
+      if (key.toLowerCase() === structName) {
+        const obj = userVars[key];
+        if (typeof obj === "object" && obj !== null) {
+          for (const f of Object.keys(obj)) {
+            if (f.toLowerCase() === fieldName) {
+              return obj[f];
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 7. Compound fallback for player position (u_player_pos / player_pos):
+  if (lowerStripped === "player_pos" || lowerStripped === "playerpos") {
+    const px = userVars["player_x"] ?? userVars["u_player_x"] ?? userVars["hero_pos"]?.x ?? userVars["state"]?.hero_pos?.x ?? 0.5;
+    const py = userVars["player_y"] ?? userVars["u_player_y"] ?? userVars["hero_pos"]?.y ?? userVars["state"]?.hero_pos?.y ?? userVars["bird"]?.y ?? 0.5;
+    return [px, py];
+  }
+
+  return undefined;
+}
+
+export interface RenderFrameOptions {
+  width: number;
+  height: number;
+  time: number;
+  yaw: number;
+  pitch: number;
+  camX?: number;
+  camY?: number;
+  camZ?: number;
+  touch?: [number, number, number, number];
+  dpad?: [number, number];
+  buttons?: [number, number, number, number];
+  sliders?: [number, number, number, number];
+  variables?: Record<string, any>;
+  playerX?: number;
+  playerY?: number;
+  action?: number;
+  score?: number;
+  pipe1?: [number, number, number];
+  pipe2?: [number, number, number];
+}
+
 export function renderWebGLFrame(
   handle: WebGLContextHandle,
-  width: number,
-  height: number,
-  time: number,
-  yaw: number,
-  pitch: number,
-  camX: number,
-  camY: number,
-  camZ: number,
-  playerX: number = 0,
-  playerY: number = 0,
-  action: number = 0,
-  score: number = 0,
-  pipe1: [number, number, number] = [0, 0, 0],
-  pipe2: [number, number, number] = [0, 0, 0]
+  widthOrOptions: number | RenderFrameOptions,
+  ...rest: any[]
 ) {
   const gl = handle.gl;
   if (!handle.program) return;
 
+  let width: number, height: number, time: number, yaw: number, pitch: number;
+  let camX = 0, camY = 0, camZ = 0;
+  let touch: [number, number, number, number] = [0, 0, 0, 0];
+  let dpad: [number, number] = [0, 0];
+  let buttons: [number, number, number, number] = [0, 0, 0, 0];
+  let sliders: [number, number, number, number] = [0, 0, 0, 0];
+  let userVars: Record<string, any> = {};
+
+  if (typeof widthOrOptions === "object" && widthOrOptions !== null) {
+    const opts = widthOrOptions;
+    width = opts.width;
+    height = opts.height;
+    time = opts.time;
+    yaw = opts.yaw;
+    pitch = opts.pitch;
+    camX = opts.camX ?? 0;
+    camY = opts.camY ?? 0;
+    camZ = opts.camZ ?? 0;
+    touch = opts.touch ?? [0, 0, 0, 0];
+    dpad = opts.dpad ?? [0, 0];
+    buttons = opts.buttons ?? [0, 0, 0, 0];
+    sliders = opts.sliders ?? [0, 0, 0, 0];
+    userVars = opts.variables ?? {};
+    if (opts.playerX !== undefined && !("player_x" in userVars)) userVars["player_x"] = opts.playerX;
+    if (opts.playerY !== undefined && !("player_y" in userVars)) userVars["player_y"] = opts.playerY;
+    if (opts.action !== undefined && !("action" in userVars)) userVars["action"] = opts.action;
+    if (opts.score !== undefined && !("score" in userVars)) userVars["score"] = opts.score;
+    if (opts.pipe1 !== undefined && !("pipe1" in userVars)) userVars["pipe1"] = opts.pipe1;
+    if (opts.pipe2 !== undefined && !("pipe2" in userVars)) userVars["pipe2"] = opts.pipe2;
+  } else {
+    width = Number(widthOrOptions);
+    height = rest[0];
+    time = rest[1];
+    yaw = rest[2];
+    pitch = rest[3];
+    camX = rest[4] ?? 0;
+    camY = rest[5] ?? 0;
+    camZ = rest[6] ?? 0;
+    const playerX = rest[7] ?? 0;
+    const playerY = rest[8] ?? 0;
+    const action = rest[9] ?? 0;
+    const score = rest[10] ?? 0;
+    const pipe1 = rest[11] ?? [0, 0, 0];
+    const pipe2 = rest[12] ?? [0, 0, 0];
+    touch = rest[13] ?? [0, 0, 0, 0];
+    dpad = rest[14] ?? [0, 0];
+    buttons = rest[15] ?? [0, 0, 0, 0];
+    sliders = rest[16] ?? [0, 0, 0, 0];
+    userVars = rest[17] ?? {
+      player_x: playerX,
+      player_y: playerY,
+      u_player_pos: [playerX, playerY],
+      action,
+      score,
+      pipe1,
+      pipe2,
+    };
+  }
+
   gl.viewport(0, 0, width, height);
   gl.useProgram(handle.program);
 
-  // Set standard uniforms whenever declared
-  if (handle.uResolution) gl.uniform2f(handle.uResolution, width, height);
-  if (handle.uTime) gl.uniform1f(handle.uTime, time);
-  if (handle.uCamRot) gl.uniform2f(handle.uCamRot, yaw, pitch);
-  if (handle.uCamPos) gl.uniform3f(handle.uCamPos, camX, camY, camZ);
-  if (handle.uPlayerPos) gl.uniform2f(handle.uPlayerPos, playerX, playerY);
-  if (handle.uAction) gl.uniform1f(handle.uAction, action);
-  if (handle.uScore) gl.uniform1f(handle.uScore, score);
-  if (handle.uPipe1) gl.uniform3f(handle.uPipe1, pipe1[0], pipe1[1], pipe1[2]);
-  if (handle.uPipe2) gl.uniform3f(handle.uPipe2, pipe2[0], pipe2[1], pipe2[2]);
+  // Standard engine inputs dictionary
+  const systemVars: Record<string, any> = {
+    u_resolution: [width, height],
+    resolution: [width, height],
+    u_time: time,
+    time: time,
+    u_cam_rot: [yaw, pitch],
+    cam_rot: [yaw, pitch],
+    u_cam_pos: [camX, camY, camZ],
+    cam_pos: [camX, camY, camZ],
+    u_touch: touch,
+    touch: touch,
+    u_mouse: touch,
+    iMouse: touch,
+    u_dpad: dpad,
+    dpad: dpad,
+    u_buttons: buttons,
+    buttons: buttons,
+    u_sliders: sliders,
+    sliders: sliders,
+  };
+
+  // Dynamically set EVERY active uniform reflected from the compiled shader!
+  if (handle.activeUniforms && handle.activeUniforms.length > 0) {
+    for (const u of handle.activeUniforms) {
+      if (
+        u.cleanName === "model" ||
+        u.cleanName === "u_model" ||
+        u.cleanName === "view_proj" ||
+        u.cleanName === "u_view_proj"
+      ) {
+        continue;
+      }
+      const val = resolveUniformValue(u.cleanName, userVars, systemVars);
+      if (val !== undefined) {
+        applyUniform(gl, u.location, u.type, val);
+      }
+    }
+  }
 
   if (handle.isMeshMode) {
     // --- 3D Mesh Mode (Official Goose 3D GFX Cube) ---
