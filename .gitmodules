@@ -1,3 +1,9 @@
 [submodule "goose"]
 	path = goose
 	url = https://github.com/aardappel/goose
+[submodule "goose_gfx"]
+	path = goose_gfx
+	url = https://github.com/aardappel/goose_gfx.git
+[submodule "goose_physics"]
+	path = goose_physics
+	url = https://github.com/aardappel/goose_physics.git
