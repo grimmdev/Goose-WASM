@@ -22,7 +22,8 @@ permissions:
 jobs:
   build-and-publish:
     name: Build & Publish Goose WASM
-    runs-on: ubuntu-latest
+    # Pin the image so ubuntu-latest cannot move this build to a new distro.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout Repository with Submodules
@@ -69,6 +70,12 @@ jobs:
 
       - name: Build Official Goose Demos
         run: npm run build:demos && npm run build:browser-probes
+
+      - name: Install Chromium for Real WebGL Tests
+        # GitHub-hosted Ubuntu provides Chromium's runtime libraries.
+        # Do not use --with-deps here: it invokes apt for additional packages
+        # and caused the Ubuntu mirror DNS failure in the supplied log.
+        run: npx --no-install playwright install chromium
 
       - name: Run Package Integration & Acceptance Tests
         run: npm test
