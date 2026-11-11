@@ -1,7 +1,7 @@
 name: Deploy Goose demos to Pages
 
-# Called by build-wasm.yml after its tagged build/tests succeed.
-# No second tag trigger: that would rebuild or race the first workflow.
+# Called only by the manually dispatched build-wasm.yml after successful tests.
+# Uses that same run's artifact; it never rebuilds from a moving branch.
 on:
   workflow_call:
 
@@ -10,14 +10,14 @@ permissions:
   pages: write
   id-token: write
 
-# Only one Pages deployment at a time, including different release tags.
+# Only one Pages deployment at a time, including different manual releases.
 concurrency:
   group: goose-github-pages
   cancel-in-progress: false
 
 jobs:
   deploy:
-    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
