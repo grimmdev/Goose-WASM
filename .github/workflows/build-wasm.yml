@@ -70,9 +70,6 @@ jobs:
       - name: Build Official Goose Demos
         run: npm run build:demos && npm run build:browser-probes
 
-      - name: Install Chromium for Real WebGL Tests
-        run: npx playwright install --with-deps chromium
-
       - name: Run Package Integration & Acceptance Tests
         run: npm test
 
