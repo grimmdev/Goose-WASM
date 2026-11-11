@@ -1,12 +1,14 @@
-name: Manual Goose WebAssembly Release
+name: Goose WebAssembly Release
 
-# This is the only entrypoint. Nothing runs on push, tag, PR or release events.
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       branch:
         description: 'Source branch to build (for example main or feature/web)'
-        required: true
+        required: false
         type: string
         default: main
       version:
@@ -19,7 +21,7 @@ permissions:
 
 # Do not cancel a release midway through package publication.
 concurrency:
-  group: goose-release-${{ inputs.version }}
+  group: goose-release-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -30,6 +32,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      branch: ${{ steps.version.outputs.branch }}
       sha: ${{ steps.source.outputs.sha }}
     steps:
       - name: Validate requested branch and version
@@ -38,20 +41,37 @@ jobs:
           SOURCE_BRANCH: ${{ inputs.branch }}
           PACKAGE_VERSION: ${{ inputs.version }}
         run: |
-          git check-ref-format "refs/heads/$SOURCE_BRANCH"
           node <<'JS'
           const fs = require('node:fs');
-          const version = process.env.PACKAGE_VERSION;
-          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
-            throw new Error('Enter a stable version without v, such as 1.0.0.');
+          const eventName = process.env.GITHUB_EVENT_NAME;
+          let rawVersion = process.env.PACKAGE_VERSION;
+          let branch = process.env.SOURCE_BRANCH;
+
+          if (eventName === 'push') {
+            const refName = process.env.GITHUB_REF_NAME || '';
+            rawVersion = refName.startsWith('v') ? refName.slice(1) : refName;
+            branch = process.env.GITHUB_REF;
+          } else {
+            if (rawVersion && rawVersion.startsWith('v')) {
+              rawVersion = rawVersion.slice(1);
+            }
+            if (!branch) {
+              branch = 'main';
+            }
           }
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ntag=v${version}\n`);
+
+          if (!rawVersion || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(rawVersion)) {
+            throw new Error(`Invalid release version "${rawVersion}". Expected semantic version like 1.0.0.`);
+          }
+
+          const tag = `v${rawVersion}`;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${rawVersion}\ntag=${tag}\nbranch=${branch}\n`);
           JS
 
       - name: Checkout selected branch and pinned submodules
         uses: actions/checkout@v4
         with:
-          ref: refs/heads/${{ inputs.branch }}
+          ref: ${{ inputs.branch || github.ref }}
           submodules: recursive
           fetch-depth: 1
 
@@ -62,13 +82,15 @@ jobs:
         run: |
           source_sha="$(git rev-parse HEAD)"
           echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
-          remote_tag="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
-          if [ -n "$remote_tag" ]; then
-            git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-            tag_sha="$(git rev-parse "$RELEASE_TAG^{commit}")"
-            if [ "$tag_sha" != "$source_sha" ]; then
-              echo "::error::Tag $RELEASE_TAG already points to another commit. Choose a new version."
-              exit 1
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            remote_tag="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
+            if [ -n "$remote_tag" ]; then
+              git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+              tag_sha="$(git rev-parse "$RELEASE_TAG^{commit}")"
+              if [ "$tag_sha" != "$source_sha" ]; then
+                echo "::error::Tag $RELEASE_TAG already points to another commit. Choose a new version."
+                exit 1
+              fi
             fi
           fi
 
@@ -121,7 +143,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_SHA: ${{ steps.source.outputs.sha }}
-          SOURCE_BRANCH: ${{ inputs.branch }}
+          SOURCE_BRANCH: ${{ steps.version.outputs.branch }}
         run: |
           python3 <<'PY'
           from pathlib import Path
