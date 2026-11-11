@@ -4,7 +4,8 @@ const assert = require("assert");
 console.log("=== Testing Goose WASM & Renderer Package ===");
 
 const { compileGooseToShader } = require("../dist/renderer.js");
-const { compileGoose, createGooseGameRuntime } = require("../dist/index.js");
+const { compileGoose } = require("../dist/index.js");
+const {createGooseGameRuntime}=require("../dist/legacy.js");
 
 console.log("1. Testing WebGL shader compiler...");
 

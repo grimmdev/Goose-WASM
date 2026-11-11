@@ -4,7 +4,7 @@ static float pads[4][32], previous[4][32];
 static int changes;
 #if defined(__EMSCRIPTEN__)
 EM_JS(void,web_poll_pads,(float *out),{
- const pads=typeof navigator!=='undefined'&&navigator.getGamepads?navigator.getGamepads():[];
+ const pads=Module.gooseHost?Module.gooseHost.state.gamepads:typeof navigator!=='undefined'&&navigator.getGamepads?navigator.getGamepads():[];
  for(let slot=0;slot<4;slot++){const p=pads[slot],at=(out>>2)+slot*32;HEAPF32.fill(0,at,at+32);if(!p||p.mapping!=='standard')continue;HEAPF32[at]=1;
  for(let a=0;a<4;a++)HEAPF32[at+1+a]=Number.isFinite(p.axes[a])?p.axes[a]:0;
  HEAPF32[at+5]=p.buttons[6]?.value||0;HEAPF32[at+6]=p.buttons[7]?.value||0;
@@ -12,7 +12,7 @@ EM_JS(void,web_poll_pads,(float *out),{
  }
 });
 EM_ASYNC_JS(int,web_pad_rumble,(int slot,float low,float high,int ms),{
- try{const pad=navigator.getGamepads?.()[slot],a=pad?.vibrationActuator;if(!a?.playEffect)return 0;const result=await a.playEffect('dual-rumble',{duration:ms,strongMagnitude:low,weakMagnitude:high});return result==='complete'?1:0;}catch(e){return 0;}
+ try{if(Module.gooseHost)return await Module.gooseHost.request('rumble',{slot,low,high,ms})?1:0;const pad=navigator.getGamepads?.()[slot],a=pad?.vibrationActuator;if(!a?.playEffect)return 0;const result=await a.playEffect('dual-rumble',{duration:ms,strongMagnitude:low,weakMagnitude:high});return result==='complete'?1:0;}catch(e){return 0;}
 });
 #endif
 void gfx_poll_gamepads(void){memcpy(previous,pads,sizeof pads);

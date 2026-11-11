@@ -9,12 +9,15 @@
 gs_gfx_buffer gs_gfx_create_buffer(int64_t usage, int64_t size, gs_gfx_bytes data) {
     gs_gfx_buffer handle = { 0 };
     if(usage & ~(GS_GFX_BUFFER_VERTEX|GS_GFX_BUFFER_INDEX)){gfx_set_error("Indirect/storage buffers are unsupported in this WebGL2 profile");return handle;}
-    if (size<0 || data.len<0 || data.len>size || (data.len && !data.data)) return handle;
+    if (size<0 || size>INT32_MAX || (uint64_t)size>SIZE_MAX || data.len<0 || data.len>size || (data.len && !data.data)){gfx_misuse("create_buffer: invalid size/data");return handle;}
 
     uint32_t handle_id=gfx_allocate(0,255);if(!handle_id)return handle;uint32_t id=handle_id&0xfffffu;if(id>g_webgl_gfx.next_buf_id)g_webgl_gfx.next_buf_id=id;
     WebGLBufferItem *item = &g_webgl_gfx.buffers[id];
     item->size = size;
     item->usage = usage;
+    item->index_data=(usage&GS_GFX_BUFFER_INDEX)?calloc((size_t)(size?size:1),1):NULL;
+    if((usage&GS_GFX_BUFFER_INDEX)&&!item->index_data){gfx_forget(0,handle_id);gfx_set_error("Index buffer allocation failed");return handle;}
+    if(item->index_data && data.len)memcpy(item->index_data,data.data,data.len);
 
 #if defined(__EMSCRIPTEN__)
     glGenBuffers(1, &item->gl_buf);
@@ -23,6 +26,7 @@ gs_gfx_buffer gs_gfx_create_buffer(int64_t usage, int64_t size, gs_gfx_bytes dat
     glBufferData(target, (GLsizeiptr)size, NULL, GL_DYNAMIC_DRAW);
     if(data.len>0)glBufferSubData(target,0,(GLsizeiptr)data.len,data.data);
     glBindBuffer(target, 0);
+    if(glGetError()!=GL_NO_ERROR){glDeleteBuffers(1,&item->gl_buf);free(item->index_data);memset(item,0,sizeof *item);gfx_forget(0,handle_id);gfx_set_error("GPU buffer allocation failed");return handle;}
 #endif
 
     handle.id = handle_id;
@@ -30,9 +34,10 @@ gs_gfx_buffer gs_gfx_create_buffer(int64_t usage, int64_t size, gs_gfx_bytes dat
 }
 
 uint8_t gs_gfx_update_buffer(gs_gfx_buffer b, int64_t offset, gs_gfx_bytes data) {
-    if (!gfx_valid(0,b.id)) return 0;
+    if (!gfx_valid(0,b.id)){gfx_misuse("Buffer handle is null or stale");return 0;}
     WebGLBufferItem *item = &g_webgl_gfx.buffers[GFX_INDEX(b)];
-    if(offset<0 || data.len<0 || offset>item->size || data.len>item->size-offset)return 0;
+    if(offset<0 || data.len<0 || offset>item->size || data.len>item->size-offset || (data.len&&!data.data)){gfx_misuse("update_buffer: invalid range or data pointer");return 0;}
+    if(item->index_data&&data.len)memcpy(item->index_data+offset,data.data,data.len);
 
 #if defined(__EMSCRIPTEN__)
     GLenum target = (item->usage & 2) ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
@@ -45,7 +50,7 @@ uint8_t gs_gfx_update_buffer(gs_gfx_buffer b, int64_t offset, gs_gfx_bytes data)
 }
 
 uint8_t gs_gfx_read_buffer(gs_gfx_buffer b,int64_t offset,gs_gfx_bytes out){
-    if(!gfx_valid(0,b.id) || offset<0 || out.len<0 || offset>g_webgl_gfx.buffers[GFX_INDEX(b)].size || out.len>g_webgl_gfx.buffers[GFX_INDEX(b)].size-offset)return 0;
+    if(!gfx_valid(0,b.id) || offset<0 || out.len<0 || offset>g_webgl_gfx.buffers[GFX_INDEX(b)].size || out.len>g_webgl_gfx.buffers[GFX_INDEX(b)].size-offset || (out.len&&!out.data)){gfx_misuse("read_buffer: stale handle or invalid range");return 0;}
 #if defined(__EMSCRIPTEN__)
     glBindBuffer(GL_COPY_READ_BUFFER,g_webgl_gfx.buffers[GFX_INDEX(b)].gl_buf);EM_ASM({GLctx.getBufferSubData(GLctx.COPY_READ_BUFFER,$0,HEAPU8,$1,$2);},(double)offset,out.data,(double)out.len);
 #endif
@@ -53,18 +58,19 @@ uint8_t gs_gfx_read_buffer(gs_gfx_buffer b,int64_t offset,gs_gfx_bytes out){
 }
 
 int64_t gs_gfx_buffer_size(gs_gfx_buffer b) {
-    if (!gfx_valid(0,b.id)) return 0;
+    if (!gfx_valid(0,b.id)){gfx_misuse("Buffer handle is null or stale");return 0;}
     return g_webgl_gfx.buffers[GFX_INDEX(b)].size;
 }
 
 void gs_gfx_release_buffer(gs_gfx_buffer b) {
-    if (!gfx_valid(0,b.id)) return;
+    if(!b.id)return;if (!gfx_valid(0,b.id)){gfx_misuse("release_buffer: stale handle");return;}
 #if defined(__EMSCRIPTEN__)
     if (g_webgl_gfx.buffers[GFX_INDEX(b)].gl_buf) {
         glDeleteBuffers(1, &g_webgl_gfx.buffers[GFX_INDEX(b)].gl_buf);
         g_webgl_gfx.buffers[GFX_INDEX(b)].gl_buf = 0;
     }
 #endif
+    free(g_webgl_gfx.buffers[GFX_INDEX(b)].index_data);g_webgl_gfx.buffers[GFX_INDEX(b)].index_data=NULL;
     gfx_forget(0,b.id);
 }
 

@@ -1,0 +1,8 @@
+<!doctype html><canvas id="game" width="640" height="480"></canvas><script type="module">
+import {CompiledGooseRunner} from '../dist/runner.mjs';
+const demo=new URLSearchParams(location.search).get('demo'),folders={cube:'g3_cube',ui:'g4_ui',physics:'g5_physics',planar2d:'g6_planar2d',minecraft:'g7_minecraft',doom:'g8_doom'},args=['--frames',demo==='planar2d'?'240':demo==='physics'?'60':'4'];
+if(demo==='physics')args.push('--boxes','128','--rate','2');if(demo==='doom')args.push('--wad','/assets/freedoom1-e1m1.wad');
+window.workerResult=null;const logs=[];let png;
+const runner=new CompiledGooseRunner({canvas:document.querySelector('canvas'),args,onLog:x=>logs.push(x),onFile:(path,bytes)=>{if(path.endsWith('.png')&&bytes)png=Array.from(bytes);}});
+try{await runner.run('../build/'+folders[demo]+'/game.mjs','../build/'+folders[demo]+'/game.wasm');window.workerResult={logs,png};}catch(e){window.workerResult={error:String(e),logs};}
+</script>

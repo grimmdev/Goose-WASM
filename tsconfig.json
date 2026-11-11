@@ -11,5 +11,13 @@
     "strict": false,
     "esModuleInterop": true
   },
-  "include": ["src/index.ts", "src/renderer.ts", "src/engine.ts", "src/gooseShaderCompiler.ts", "src/webglRenderer.ts"]
+  "include": [
+    "src/index.ts",
+    "src/renderer.ts",
+    "src/engine.ts",
+    "src/gooseShaderCompiler.ts",
+    "src/webglRenderer.ts",
+    "src/legacy.ts",
+    "src/runtime/compiled.worker.ts"
+  ]
 }

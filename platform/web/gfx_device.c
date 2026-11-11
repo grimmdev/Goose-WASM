@@ -11,6 +11,8 @@ int gfx_valid(int kind,uint32_t id){unsigned i=id&0xfffffu;return id&&i<256&&liv
 void gfx_forget(int kind,uint32_t id){if(gfx_valid(kind,id)){unsigned i=id&0xfffffu;live_handles[kind][i]=0;generations[kind][i]++;}}
 uint32_t gfx_live_handle(int kind,unsigned index){return live_handles[kind][index];}
 
+void gfx_misuse(const char *msg){gfx_set_error(msg);g_webgl_gfx.misuse++;}
+
 void gfx_set_error(const char *msg) {
     if (!msg) return;
     strncpy(g_webgl_gfx.error, msg, sizeof(g_webgl_gfx.error) - 1);
@@ -20,7 +22,7 @@ void gfx_set_error(const char *msg) {
 uint8_t gs_gfx_available(void) {
 #if defined(__EMSCRIPTEN__)
     if(g_webgl_gfx.is_open)return 1;
-    return EM_ASM_INT({if(typeof document==='undefined')return 0;const c=document.createElement('canvas');const gl=c.getContext('webgl2');if(!gl)return 0;gl.getExtension('WEBGL_lose_context')?.loseContext();return 1;});
+    return EM_ASM_INT({if(Module.gooseHost)return Module.gooseHost.state.webgl2?1:0;if(typeof document==='undefined')return 0;const c=document.createElement('canvas');const gl=c.getContext('webgl2');if(!gl)return 0;gl.getExtension('WEBGL_lose_context')?.loseContext();return 1;});
 #else
     return 0;
 #endif
@@ -34,20 +36,22 @@ uint8_t gs_gfx_open(gs_gfx_bytes title, int64_t width, int64_t height, int64_t f
 #if defined(__EMSCRIPTEN__)
     EmscriptenWebGLContextAttributes attr;emscripten_webgl_init_context_attributes(&attr);
     attr.majorVersion=2;attr.minorVersion=0;attr.depth=1;attr.stencil=0;attr.antialias=0;
+    EM_ASM({if(Module.gooseHost && Module.canvas)GL.offscreenCanvases["canvas"]=Module.canvas;});
     emscripten_set_canvas_element_size("#canvas",g_webgl_gfx.width,g_webgl_gfx.height);
     int ctx=emscripten_webgl_create_context("#canvas",&attr);
-    if(ctx<=0 || emscripten_webgl_make_context_current(ctx)!=EMSCRIPTEN_RESULT_SUCCESS){gfx_set_error("Unable to create a WebGL2 context");return 0;}
-    g_webgl_gfx.context=ctx;
+    if(ctx<=0 || emscripten_webgl_make_context_current(ctx)!=EMSCRIPTEN_RESULT_SUCCESS){if(ctx>0)emscripten_webgl_destroy_context(ctx);gfx_set_error("Unable to create a WebGL2 context");return 0;}
+    g_webgl_gfx.context=ctx;g_webgl_gfx.is_open=true; /* Enables cleanup on partial initialization failure. */
     emscripten_webgl_enable_extension(ctx,"EXT_color_buffer_float");emscripten_webgl_enable_extension(ctx,"OES_texture_float_linear");
     gs_gfx_texture_desc color={0};color.width=g_webgl_gfx.width;color.height=g_webgl_gfx.height;color.format=GS_GFX_RGBA8;color.usage=GS_GFX_COLOR_TARGET;
     gs_gfx_texture_desc depth=color;depth.format=GS_GFX_DEPTH24;depth.usage=GS_GFX_DEPTH_TARGET;
     gs_gfx_texture screen=gs_gfx_create_texture(&color),z=gs_gfx_create_texture(&depth);
-    if(GFX_INDEX(screen)!=1 || GFX_INDEX(z)!=2){gfx_set_error("Unable to allocate logical screen targets");return 0;}
+    if(GFX_INDEX(screen)!=1 || GFX_INDEX(z)!=2){gs_gfx_close();gfx_set_error("Unable to allocate logical screen targets");return 0;}
     glBindFramebuffer(GL_FRAMEBUFFER,g_webgl_gfx.textures[1].gl_fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_TEXTURE_2D,g_webgl_gfx.textures[2].gl_tex,0);
-    if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE){gfx_set_error("Incomplete screen framebuffer");return 0;}
+    if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE){gs_gfx_close();gfx_set_error("Incomplete screen framebuffer");return 0;}
     g_webgl_gfx.start_time=emscripten_get_now()/1000.;g_webgl_gfx.last_frame_time=g_webgl_gfx.start_time;
     gfx_reset_gamepads();gfx_install_input();
+    EM_ASM({if(Module.gooseHost)Module.gooseHost.request('canvas-size',{width:$0,height:$1}).catch(()=>{});},(int)g_webgl_gfx.width,(int)g_webgl_gfx.height);
 #endif
     g_webgl_gfx.open_count++;g_webgl_gfx.frame_count=0;g_webgl_gfx.delta_time=1./60.;g_webgl_gfx.is_open=true;
     gs_gfx_set_title(title);
@@ -60,7 +64,7 @@ uint8_t gs_gfx_open_headless(int64_t width, int64_t height, int64_t flags) {
 
 void gfx_present(void){
 #if defined(__EMSCRIPTEN__)
-    if(!g_webgl_gfx.context)return;glDisable(GL_SCISSOR_TEST);
+    if(!g_webgl_gfx.context || !g_webgl_gfx.textures[1].gl_fbo)return;glDisable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_READ_FRAMEBUFFER,g_webgl_gfx.textures[1].gl_fbo);glBindFramebuffer(GL_DRAW_FRAMEBUFFER,0);
     /* Logical row zero is native top-left; flip exactly once at presentation. */
     glBlitFramebuffer(0,g_webgl_gfx.height,g_webgl_gfx.width,0,0,0,g_webgl_gfx.width,g_webgl_gfx.height,GL_COLOR_BUFFER_BIT,GL_NEAREST);glFlush();
@@ -104,7 +108,7 @@ int64_t gs_gfx_driver(gs_gfx_bytes out) {
 }
 
 #if defined(__EMSCRIPTEN__)
-EM_ASYNC_JS(void,web_next_frame,(),{await new Promise(resolve=>requestAnimationFrame(resolve));});
+EM_ASYNC_JS(void,web_next_frame,(),{if(Module.gooseHost)await Module.gooseHost.frame();else await new Promise(resolve=>requestAnimationFrame(resolve));});
 #endif
 uint8_t gs_gfx_frame(void) {
     if (!g_webgl_gfx.is_open || g_webgl_gfx.quit_requested) return 0;
@@ -127,6 +131,7 @@ uint8_t gs_gfx_frame(void) {
 
     // Suspend until next animation frame
     web_next_frame();gfx_poll_gamepads();
+    EM_ASM({Module.gooseHost?.drain();});
 #endif
 
     return 1;
@@ -142,7 +147,7 @@ void gs_gfx_flush(void) {
 
 void gs_gfx_set_title(gs_gfx_bytes title){
 #if defined(__EMSCRIPTEN__)
-    EM_ASM({if(typeof document!=='undefined')document.title=new TextDecoder().decode(HEAPU8.subarray($0,$0+$1));},title.data,(int)title.len);
+    EM_ASM({const title=new TextDecoder().decode(HEAPU8.subarray($0,$0+$1));if(Module.gooseHost)Module.gooseHost.request('title',{title}).catch(()=>{});else if(typeof document!=='undefined')document.title=title;},title.data,(int)title.len);
 #endif
 }
 

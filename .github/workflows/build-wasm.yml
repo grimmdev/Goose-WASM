@@ -69,7 +69,7 @@ jobs:
         run: npm run build:shader-tools
 
       - name: Build Official Goose Demos
-        run: npm run build:demos && npm run build:browser-probes
+        run: npm run build:demos && npm run build:browser-probes && npm run build:runner-fixtures
 
       - name: Install Chromium for Real WebGL Tests
         # GitHub-hosted Ubuntu provides Chromium's runtime libraries.

@@ -47,6 +47,11 @@ EMSCRIPTEN_KEEPALIVE double probe(int op,int a,int b){
  case 41:gs_audio_close();return gs_audio_open(48000,0);
  case 42:{float samples[4096];for(int i=0;i<4096;i++)samples[i]=0.25f;gs_audio_sound sound=gs_audio_create_sound((gs_audio_f32_slice){samples,4096},48000,1);return gs_audio_play(sound,0.5f,0,1,1).id!=0;}
  case 43:gs_audio_close();return 1;
+ case 50:{int64_t n=gs_gfx_misuse_count();gs_gfx_draw(3,1,0,0);return gs_gfx_misuse_count()==n+1;}
+ case 51:glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE);glDepthMask(GL_FALSE);return probe(30,0,0);
+ case 52:{gs_gfx_texture screen=gs_gfx_screen(),depth=gs_gfx_screen_depth();gs_gfx_pass_desc d={0};d.color[0]=screen;d.depth=depth;if(!gs_gfx_begin_pass(&d))return 0;WebGLPipelineItem item={0};item.attribute_count=1;item.strides[0]=8;item.attributes[0]=(WebGLAttribute){.slot=0,.offset=0,.bytes=8};g_webgl_gfx.bound_pipe=&item;float values[2]={0,0};gs_gfx_buffer b=gs_gfx_create_buffer(GS_GFX_BUFFER_VERTEX,8,(gs_gfx_bytes){(uint8_t*)values,8});gs_gfx_bind_vertex_buffer(0,b,0);int64_t n=gs_gfx_misuse_count();gs_gfx_draw(2,1,0,0);int ok=gs_gfx_misuse_count()==n+1;uint16_t bad=20;gs_gfx_buffer ib=gs_gfx_create_buffer(GS_GFX_BUFFER_INDEX,2,(gs_gfx_bytes){(uint8_t*)&bad,2});gs_gfx_bind_index_buffer(ib,2,0);n=gs_gfx_misuse_count();gs_gfx_draw_indexed(1,1,0,0,0);ok&=gs_gfx_misuse_count()==n+1;gs_gfx_end_pass();g_webgl_gfx.bound_pipe=NULL;gs_gfx_release_buffer(b);gs_gfx_release_buffer(ib);return ok;}
+ case 53:{int64_t n=gs_gfx_misuse_count();gs_gfx_bind_pipeline((gs_gfx_pipeline){0});return gs_gfx_misuse_count()==n+1;}
+ case 54:{GLint max=0;glGetIntegerv(GL_MAX_TEXTURE_SIZE,&max);gs_gfx_close();int failed=!gs_gfx_open(text("fail"),max+1,1,0);int clean=!g_webgl_gfx.context&&!g_webgl_gfx.is_open;int retry=gs_gfx_open(text("retry"),320,240,0);return failed&&clean&&retry;}
  default:return -99;
  }
 }

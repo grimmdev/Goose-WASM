@@ -33,6 +33,7 @@ typedef struct {
     GLuint gl_buf;
     int64_t size;
     int64_t usage;
+    uint8_t *index_data;
 } WebGLBufferItem;
 
 typedef struct {
@@ -57,7 +58,7 @@ typedef struct {
 typedef struct {
     uint8_t location, slot, components, integer, normalized;
     GLenum type;
-    uint32_t offset;
+    uint32_t offset, bytes;
 } WebGLAttribute;
 typedef struct { GLuint buffer; int stage, slot, point; uint32_t size; } WebGLUniform;
 typedef struct {
@@ -70,6 +71,7 @@ typedef struct {
     uint32_t strides[2];
     int attribute_count, uniform_count;
     WebGLUniform uniforms[32];
+    uint32_t uniform_sizes[2][16];
     int sampler_units[2][16];
 } WebGLPipelineItem;
 
@@ -93,6 +95,7 @@ typedef struct {
     WebGLPipelineItem *bound_pipe;
     GLuint bound_vao;
     GLuint bound_vb[4];
+    gs_gfx_buffer bound_vb_handles[2], bound_index_handle;
     GLintptr bound_vb_offsets[4];
     GLuint bound_ib;
     int32_t bound_index_size;
@@ -137,6 +140,7 @@ uint32_t gfx_live_handle(int kind,unsigned index);
 void gfx_poll_gamepads(void);
 void gfx_reset_gamepads(void);
 void gfx_set_error(const char *msg);
+void gfx_misuse(const char *msg);
 void gfx_present(void);
 void gfx_install_input(void);
 void gfx_remove_input(void);

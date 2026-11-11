@@ -23,7 +23,7 @@ static int add_layout(WebGLPipelineItem *item, const WebShader *shader) {
         else if(format>=16 && format<=21){a->components=(format%2==0)?2:4;size=a->components*2;a->type=format<=17?GL_SHORT:format<=19?GL_UNSIGNED_SHORT:GL_HALF_FLOAT;a->integer=format<=17;a->normalized=format==18 || format==19;}
         else {gfx_set_error("Unsupported vertex format");return 0;}
         if((a->integer && kind==2)||(!a->integer && kind!=2)){gfx_set_error("Vertex format disagrees with shader input type");return 0;}
-        a->offset=item->strides[a->slot];item->strides[a->slot]+=size;
+        a->bytes=size;a->offset=item->strides[a->slot];item->strides[a->slot]+=size;
     }return 1;
 }
 static void free_item(WebGLPipelineItem *item) {
@@ -54,7 +54,7 @@ gs_gfx_pipeline gs_gfx_create_pipeline(gs_gfx_bytes vb,gs_gfx_bytes fb,const gs_
     for(int stage=0;stage<2;stage++) {
         WebShader *s=stage?&fs:&vs;
         for(int i=0;i<s->uniform_count;i++) {
-            WebShaderUniform *u=&s->uniforms[i];GLuint index=glGetUniformBlockIndex(item.gl_program,u->name);
+            WebShaderUniform *u=&s->uniforms[i];item.uniform_sizes[stage][u->slot]=u->size;GLuint index=glGetUniformBlockIndex(item.gl_program,u->name);
             if(index==GL_INVALID_INDEX)continue; /* Optimized-out resource. */
             GLint actual=0;glGetActiveUniformBlockiv(item.gl_program,index,GL_UNIFORM_BLOCK_DATA_SIZE,&actual);
             if(actual<0 || (uint32_t)actual>u->size){gfx_set_error("Uniform block size differs from compiler reflection");free_item(&item);glUseProgram(0);return result;}
@@ -68,7 +68,7 @@ gs_gfx_pipeline gs_gfx_create_pipeline(gs_gfx_bytes vb,gs_gfx_bytes fb,const gs_
     result.id=gfx_allocate(3,63);if(!result.id){free_item(&item);return result;}if(GFX_INDEX(result)>g_webgl_gfx.next_pipe_id)g_webgl_gfx.next_pipe_id=GFX_INDEX(result);g_webgl_gfx.pipelines[GFX_INDEX(result)]=item;return result;
 }
 void gs_gfx_release_pipeline(gs_gfx_pipeline p) {
-    if(!gfx_valid(3,p.id))return;
+    if(!p.id)return;if(!gfx_valid(3,p.id)){gfx_misuse("release_pipeline: stale handle");return;}
 #if defined(__EMSCRIPTEN__)
     if(g_webgl_gfx.bound_pipe==&g_webgl_gfx.pipelines[GFX_INDEX(p)])g_webgl_gfx.bound_pipe=NULL;
     free_item(&g_webgl_gfx.pipelines[GFX_INDEX(p)]);

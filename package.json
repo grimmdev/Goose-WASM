@@ -1,6 +1,6 @@
 {
   "name": "@grimmdev/goose-wasm",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Client-side WebAssembly compiler, linter, transpiler, and real-time WebGL renderer for the Goose programming language",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -21,6 +21,15 @@
     "./linter": {
       "types": "./dist/goose_linter.d.ts",
       "default": "./dist/goose_linter.js"
+    },
+    "./legacy": {
+      "types": "./dist/legacy.d.ts",
+      "import": "./dist/legacy.mjs",
+      "require": "./dist/legacy.js"
+    },
+    "./runner": {
+      "types": "./dist/runtime/compiledRunner.d.ts",
+      "import": "./dist/runner.mjs"
     }
   },
   "repository": {
@@ -38,14 +47,16 @@
     "build:wasm": "node scripts/build-compiler.cjs",
     "build:ts": "node scripts/bundle.cjs",
     "build": "npm run build:wasm && npm run build:ts",
-    "test": "npm run test:shaders && node scripts/test.cjs",
+    "test": "npm run test:shaders && npm run test:build-jobs && node scripts/test.cjs",
     "deps": "node scripts/fetch-deps.cjs",
     "build:shader-tools": "node scripts/build-shader-tools.cjs",
     "build:web-libs": "node scripts/build-web-libs.cjs",
     "build:demos": "node scripts/build-demos.cjs",
     "test:shaders": "node tests/web-shaders.test.cjs",
     "test:browser": "node tests/browser.test.cjs",
-    "build:browser-probes": "node scripts/build-browser-probes.cjs"
+    "build:browser-probes": "node scripts/build-browser-probes.cjs",
+    "build:runner-fixtures": "node scripts/build-runner-fixtures.cjs",
+    "test:build-jobs": "node tests/build-jobs.test.cjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",

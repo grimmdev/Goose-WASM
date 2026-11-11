@@ -1,0 +1,13 @@
+const fs=require('fs'),path=require('path'),{buildProject}=require('../service/build-project.js');
+(async()=>{
+ const root=path.resolve(__dirname,'..');
+ const fixtures={
+  input:'import std; import vec; import gfx; fn main() { assert(gfx::open("input",320,240)); defer gfx::close(); gfx::text_input(true); while gfx::frame() { if gfx::key_pressed("A") {print("key A");} if gfx::mouse_pressed(1) {print("mouse down");} if gfx::mouse_released(1) {print("mouse up");} for e in gfx::events() {if e.kind == gfx::EVENT_TEXT {print("text ",e.codepoint);}} if gfx::key_pressed("Escape") {break;} } }',
+  motion:'import std; import vec; import gfx; fn main() { assert(gfx::open("motion",320,240)); defer gfx::close(); var captured = false; gfx::set_mouse_relative(true); while gfx::frame() { let locked = gfx::mouse_relative(); if locked != captured { print(if locked {"locked"} else {"unlocked"}); captured = locked; } let d = gfx::mouse_delta(); if d.x != 0.0 || d.y != 0.0 { print("motion ",d.x," ",d.y); } if gfx::key_pressed("Q") { gfx::set_mouse_relative(false); } if gfx::key_pressed("L") { gfx::set_mouse_relative(true); } if gfx::key_pressed("Escape") {break;} } }',
+  virtual:'import std; import vec; import gfx; import web_input; fn main() { assert(gfx::open("virtual",320,240)); defer gfx::close(); gfx::text_input(true); while gfx::frame() { if web_input::pressed(0,0) { print("pad pressed"); } if web_input::released(0,0) { print("pad released"); } for e in gfx::events() { if e.kind == gfx::EVENT_TEXT {print("text ",e.codepoint);} } if gfx::key_pressed("R") { gfx::set_mouse_relative(true); } if gfx::key_pressed("T") { gfx::set_mouse_relative(false); } if gfx::key_pressed("P") { let p=gfx::mouse_pos(); let d=gfx::mouse_delta(); print("state|",gfx::key_down("A"),"|",gfx::key_pressed("A"),"|",gfx::key_released("A"),"|",gfx::mouse_down(1),"|",p.x,"|",p.y,"|",d.x,"|",d.y,"|",gfx::mouse_wheel(),"|",gfx::mouse_relative(),"|",gfx::focused(),"|",web_input::connected(0),"|",web_input::axis(0,0),"|",web_input::axis(0,4),"|",web_input::value(0,0)); } } }',
+  infinite:'fn main() { var n: i64 = 0; while true { n += 1; } }',
+  terminal:'import std; import os; fn main() { print("ready"); var line: u8[>..] = []; while read_line(line) { print("echo: ", line); line.clear(); } print("eof"); }',
+  files:'import std; import os; fn main() { let data: u8[4] = [71,111,111,115]; assert(write_file("state.bin",data)); print("saved"); }'
+ };
+ for(const [name,source] of Object.entries(fixtures)){const r=await buildProject({source,outDir:path.join(root,'build/runner-'+name)});if(!r.success)throw Error(JSON.stringify(r));console.log(name+': '+r.wasmSize+' bytes');}
+})().catch(e=>{console.error(e);process.exitCode=1;});

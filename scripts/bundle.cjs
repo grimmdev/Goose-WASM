@@ -66,6 +66,14 @@ esbuild.buildSync({
   outfile: path.join(distDir, "renderer.mjs"),
 });
 
+// The worker is a separately deployable ES module next to index.mjs.
+esbuild.buildSync({entryPoints:[path.join(srcDir,'runtime/compiled.worker.ts')],bundle:true,platform:'browser',format:'esm',outfile:path.join(distDir,'compiled.worker.mjs')});
+
+esbuild.buildSync({entryPoints:[path.join(srcDir,'runtime/projectStore.ts')],bundle:true,platform:'browser',format:'esm',outfile:path.join(distDir,'project-store.mjs')});
+
+esbuild.buildSync({entryPoints:[path.join(srcDir,'runtime/compiledRunner.ts')],bundle:true,platform:'browser',format:'esm',outfile:path.join(distDir,'runner.mjs')});
+for(const [format,ext] of [['cjs','js'],['esm','mjs']])esbuild.buildSync({entryPoints:[path.join(srcDir,'legacy.ts')],bundle:true,platform:'neutral',format,outfile:path.join(distDir,'legacy.'+ext)});
+
 // Generate TypeScript declarations
 console.log("Generating TypeScript declaration files...");
 const tscBin = path.join(

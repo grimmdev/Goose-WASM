@@ -1,0 +1,19 @@
+<!doctype html><canvas id="game" width="640" height="480"></canvas><script type="module">
+import {CompiledGooseRunner} from '../dist/index.mjs';
+import {ProjectStore} from '../dist/project-store.mjs';
+window.logs=[];window.runnerError=null;window.status='idle';window.finished=false;
+const mode=new URLSearchParams(location.search).get('mode')||'infinite';
+const runner=window.runner=new CompiledGooseRunner({
+ ...(['cube','input','motion','virtual'].includes(mode)?{canvas:document.querySelector('canvas'),args:['--frames','4']}:{}),
+ ...(mode==='files'?{projectId:'runner-control-test'}:{}),
+ ...(mode==='timeout'?{executionTimeoutMs:250}:{}),
+ loadTimeoutMs:1000,
+ onStatus:s=>window.status=s,onLog:x=>window.logs.push(x),onStdinRequested:()=>window.stdinWaiting=true,
+ onPointerLockChange:(status,message)=>window.captureStatus={status,message},
+ onFile:(path,bytes)=>window.lastFile={path,bytes:bytes?Array.from(bytes):null}
+});
+window.heartbeat=0;setInterval(()=>window.heartbeat++,20);
+const folder=mode==='cube'?'g3_cube':mode==='timeout'?'runner-infinite':'runner-'+mode;
+runner.run('../build/'+(mode==='loadtimeout'?'runner-files':folder)+'/game.mjs',mode==='loadtimeout'?'./stalled.wasm':'../build/'+folder+'/game.wasm').then(()=>window.finished=true).catch(e=>{window.runnerError={name:e.name,message:e.message};window.finished=true;});
+window.readStored=async()=>{const store=new ProjectStore('runner-control-test');try{return Object.fromEntries(Object.entries(await store.files()).map(([k,v])=>[k,Array.from(v)]));}finally{await store.close();}};
+</script>

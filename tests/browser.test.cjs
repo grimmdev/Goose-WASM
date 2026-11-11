@@ -3,6 +3,7 @@ const {chromium}=require('playwright');
 async function runBrowserTests({demos=['cube','ui','physics','planar2d','minecraft','doom'],switching=true}={}){
  const root=path.resolve(__dirname,'..');
  const server=http.createServer((req,res)=>{
+  if(req.url==='/tests/stalled.wasm'){res.writeHead(200,{'Content-Type':'application/wasm'});res.write(Buffer.from([0,97,115,109]));return;}
   const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname),file=path.resolve(root,'.'+(pathname.endsWith('/')?pathname+'index.html':pathname));
   if(!file.startsWith(root+path.sep)){res.writeHead(403).end();return;}
   fs.readFile(file,(e,data)=>{if(e){res.writeHead(404).end();return;}res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.wasm':'application/wasm'}[path.extname(file)]||'application/octet-stream'));res.end(data);});
@@ -36,7 +37,7 @@ async function runBrowserTests({demos=['cube','ui','physics','planar2d','minecra
     const game=page.frames().find(f=>f.url().includes('demo.html?demo='+name));await game.locator('canvas').click();
     await game.waitForFunction(()=>document.pointerLockElement!==null,null,{timeout:15000});
     if(name==='minecraft'){
-      await page.keyboard.press('F5');await page.waitForFunction(()=>localStorage.getItem('goose-mini-minecraft-save-v1')!==null,null,{timeout:15000});
+      await page.keyboard.press('F5');await page.waitForFunction(async()=>{const {ProjectStore}=await import('/dist/project-store.mjs');const store=new ProjectStore('demo-minecraft');try{return !!(await store.files())['mini_minecraft.sav'];}finally{await store.close();}},null,{timeout:15000});
       await page.locator('a[download="mini_minecraft.sav"]').waitFor();await page.keyboard.press('F12');await page.locator('a[download="mini_minecraft.png"]').waitFor({timeout:15000});
     }else await game.waitForFunction(()=>window.__audioPeak>0.001,null,{timeout:15000});
     await page.keyboard.press('Escape');await game.waitForFunction(()=>document.pointerLockElement===null,null,{timeout:15000});
@@ -50,9 +51,21 @@ async function runBrowserTests({demos=['cube','ui','physics','planar2d','minecra
   await page.goto(base+'/tests/runner-host.html');await page.waitForFunction(()=>window.runnerResult!=null,null,{timeout:60000});
   const runner=await page.evaluate(()=>window.runnerResult);assert.ok(!runner.error,JSON.stringify(runner));assert.equal(runner.running,false);assert.equal(runner.restored,true);assert.ok(runner.logs.some(x=>x.includes('cube in the middle: true')));
   console.log('Public compiled runner: real WASM, async exit, canvas restore passed');
+  await require('./mouse-capture.test.cjs').runMouseCaptureTests({page,base});
+  await require('./virtual-input.test.cjs').runVirtualInputTests({page,base});
+  for(const demo of demos){
+   await page.goto(base+'/tests/worker-render-host.html?demo='+demo);await page.waitForFunction(()=>window.workerResult!=null,null,{timeout:60000});const r=await page.evaluate(()=>window.workerResult);assert.ok(!r.error,JSON.stringify(r));assert.ok(r.png&&r.png.length>100);const png=Buffer.from(r.png);assert.equal(png.subarray(0,8).toString('hex'),'89504e470d0a1a0a');if(demo==='cube')assert.ok(r.logs.some(x=>x.includes('cube in the middle: true')));console.log('Dedicated worker WebGL2 pass:',demo,png.length+' PNG bytes');
+  }
+  await page.goto(base+'/tests/runner-control.html?mode=input');await page.waitForFunction(()=>window.status==='running');await page.locator('textarea').waitFor();await page.keyboard.down('a');await page.waitForFunction(()=>window.logs.includes('key A'));await page.keyboard.up('a');await page.locator('textarea').fill('é🙂');await page.waitForFunction(()=>window.logs.includes('text 233')&&window.logs.includes('text 128578'));await page.locator('canvas').click();await page.waitForFunction(()=>window.logs.includes('mouse down')&&window.logs.includes('mouse up'));await page.keyboard.press('Escape');await page.waitForFunction(()=>window.finished);assert.equal(await page.evaluate(()=>window.runnerError),null);console.log('Worker input bridge: keyboard, mouse and Unicode passed');
+  await page.goto(base+'/tests/runner-control.html?mode=infinite');await page.waitForFunction(()=>window.status==='running');const before=await page.evaluate(()=>window.heartbeat);await page.waitForTimeout(150);assert.ok(await page.evaluate(()=>window.heartbeat)>before,'non-yielding WASM must not freeze UI');await page.evaluate(()=>window.runner.stop());await page.waitForFunction(()=>window.finished);assert.equal(await page.evaluate(()=>window.runnerError.name),'AbortError');
+  await page.goto(base+'/tests/runner-control.html?mode=timeout');await page.waitForFunction(()=>window.finished);assert.ok((await page.evaluate(()=>window.runnerError.message)).includes('Execution timed out'));
+  await page.goto(base+'/tests/runner-control.html?mode=terminal');await page.waitForFunction(()=>window.stdinWaiting);await page.evaluate(()=>{window.stdinWaiting=false;window.runner.writeStdin('héllo\n');});await page.waitForFunction(()=>window.logs.includes('echo: héllo'));await page.evaluate(()=>window.runner.closeStdin());await page.waitForFunction(()=>window.finished);assert.equal(await page.evaluate(()=>window.runnerError),null);assert.ok(await page.evaluate(()=>window.logs.includes('eof')));
+  await page.goto(base+'/tests/runner-control.html?mode=loadtimeout');await page.waitForFunction(()=>window.finished);assert.ok((await page.evaluate(()=>window.runnerError.message)).includes('loading timed out'));
+  await page.goto(base+'/tests/runner-control.html?mode=files');await page.waitForFunction(()=>window.finished);assert.equal(await page.evaluate(()=>window.runnerError),null);assert.deepEqual(await page.evaluate(()=>window.readStored()),{'state.bin':[71,111,111,115]});
+  console.log('Worker runner: infinite-loop Stop, execution timeout, asynchronous stdin/EOF and durable project files passed');
   await page.goto(base+'/tests/probe-host.html');await page.waitForFunction(()=>window.probeReady||window.probeError);assert.ok(!await page.evaluate(()=>window.probeError));
   const probe=(op,a=0,b=0)=>page.evaluate(([op,a,b])=>window.probe(op,a,b),[op,a,b]);
-  for(const [op,label] of [[33,'unsupported window flags rejected'],[10,'buffer reuse and stale handles'],[11,'texture reuse'],[12,'PNG loading'],[13,'unsupported textures rejected'],[14,'upload bounds'],[15,'sampler state'],[24,'R8 texture format'],[30,'multiple color and separate depth attachments'],[31,'BGRA byte order']])assert.equal(await probe(op),1,label);
+  for(const [op,label] of [[33,'unsupported window flags rejected'],[50,'draw without pass reports misuse'],[51,'clear resets write masks'],[52,'vertex/index fetch bounds'],[53,'invalid pipeline reports misuse'],[54,'partial graphics initialization cleanup and retry'],[10,'buffer reuse and stale handles'],[11,'texture reuse'],[12,'PNG loading'],[13,'unsupported textures rejected'],[14,'upload bounds'],[15,'sampler state'],[24,'R8 texture format'],[30,'multiple color and separate depth attachments'],[31,'BGRA byte order']])assert.equal(await probe(op),1,label);
   assert.equal(await probe(17),5);assert.equal(await probe(18),69);
   await page.locator('#canvas').focus();await page.keyboard.down('a');assert.equal(await probe(1),1);await page.keyboard.up('a');assert.equal(await probe(1),0);
   await page.keyboard.down('Shift');await page.keyboard.down('1');assert.equal(await probe(32),1,'shifted digit uses physical scancode');await page.keyboard.up('1');await page.keyboard.up('Shift');

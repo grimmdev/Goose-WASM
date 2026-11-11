@@ -4,9 +4,10 @@ EMSCRIPTEN_KEEPALIVE void goose_web_audio_mix(float *out,int frames){
     if(audio.open && !audio.offline)audio_mix(out,frames);
     else memset(out,0,(size_t)frames*2*sizeof(float));
 }
-EM_JS(int,web_audio_available,(),{return typeof AudioContext!=='undefined'||typeof webkitAudioContext!=='undefined';});
-EM_JS(int,web_audio_open,(int rate),{
+EM_JS(int,web_audio_available,(),{if(Module.gooseHost)return Module.gooseHost.state.audioAvailable?1:0;return typeof AudioContext!=='undefined'||typeof webkitAudioContext!=='undefined';});
+EM_ASYNC_JS(int,web_audio_open,(int rate),{
     try{
+        if(Module.gooseHost)return await Module.gooseHost.request('audio-open',{rate})?1:0;
         const Context=globalThis.AudioContext||globalThis.webkitAudioContext;
         if(!Context)throw Error('Web Audio is unavailable');
         const ctx=new Context({sampleRate:rate}),frames=1024,ptr=_malloc(frames*2*4);
@@ -34,10 +35,10 @@ EM_JS(int,web_audio_open,(int rate),{
     }catch(e){err('Web Audio device failed: '+e.message);return 0;}
 });
 EM_JS(void,web_audio_close,(),{
-    const device=Module.gooseAudio;if(!device)return;delete Module.gooseAudio;
+    if(Module.gooseHost){Module.gooseHost.request('audio-close').catch(()=>{});return;}const device=Module.gooseAudio;if(!device)return;delete Module.gooseAudio;
     clearInterval(device.timer);for(const remove of device.listeners)remove();
     for(const source of device.sources){try{source.stop();source.disconnect();}catch(e){}}
     device.ctx.close().catch(()=>{});_free(device.ptr);
 });
 
-EM_JS(double,web_audio_ahead_frames,(),{const d=Module.gooseAudio;return d?Math.max(0,d.next-d.ctx.currentTime)*d.ctx.sampleRate:0;});
+EM_JS(double,web_audio_ahead_frames,(),{if(Module.gooseHost)return Module.gooseHost.state.audioAhead||0;const d=Module.gooseAudio;return d?Math.max(0,d.next-d.ctx.currentTime)*d.ctx.sampleRate:0;});

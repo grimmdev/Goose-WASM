@@ -123,20 +123,21 @@ float gs_gfx_mouse_wheel(void) {
 
 #if defined(__EMSCRIPTEN__)
 EM_ASYNC_JS(int,web_relative,(int on),{
+ if(Module.gooseHost)return await Module.gooseHost.request('relative',{on:!!on});
  Module.gooseWantsRelative=!!on;const c=Module.canvas;if(!c || typeof document==='undefined')return 0;
  if(!on){document.exitPointerLock?.();return 1;}
  if(!c.requestPointerLock)return 0;
  try{await c.requestPointerLock();return document.pointerLockElement===c?1:0;}catch(e){err('Pointer lock rejected: '+e.message);return 0;}
 });
-EM_JS(void,web_exit_relative,(),{Module.gooseWantsRelative=false;if(typeof document!=='undefined')document.exitPointerLock?.();});
-EM_JS(int,web_is_relative,(),{return typeof document!=='undefined' && document.pointerLockElement===Module.canvas?1:0;});
-EM_JS(void,web_cursor,(int visible),{if(Module.canvas)Module.canvas.style.cursor=visible?"":"none";});
-EM_JS(void,web_text_enable,(int on),{const b=Module.gooseInput;if(!b)return;b.textEnabled=!!on;if(on)b.text.focus({preventScroll:true});else {b.text.blur();Module.canvas.focus({preventScroll:true});}});
+EM_JS(void,web_exit_relative,(),{if(Module.gooseHost){Module.gooseHost.request('relative',{on:false}).catch(()=>{});return;}Module.gooseWantsRelative=false;if(typeof document!=='undefined')document.exitPointerLock?.();});
+EM_JS(int,web_is_relative,(),{if(Module.gooseHost)return Module.gooseHost.state.relative?1:0;return typeof document!=='undefined' && document.pointerLockElement===Module.canvas?1:0;});
+EM_JS(void,web_cursor,(int visible),{if(Module.gooseHost){Module.gooseHost.request('cursor',{visible:!!visible}).catch(()=>{});return;}if(Module.canvas)Module.canvas.style.cursor=visible?"":"none";});
+EM_JS(void,web_text_enable,(int on),{if(Module.gooseHost){Module.gooseHost.state.textEnabled=!!on;Module.gooseHost.request('text',{on:!!on}).catch(()=>{});return;}const b=Module.gooseInput;if(!b)return;b.textEnabled=!!on;if(on)b.text.focus({preventScroll:true});else {b.text.blur();Module.canvas.focus({preventScroll:true});}});
 EM_ASYNC_JS(int,web_clip_read,(uint8_t *out,int cap),{
- try{if(!navigator.clipboard?.readText)throw Error('Clipboard API unavailable');const text=await navigator.clipboard.readText(),bytes=new TextEncoder().encode(text);if(out&&cap>0)HEAPU8.set(bytes.subarray(0,cap),out);return bytes.length;}catch(e){err('Clipboard read failed: '+e.message);return -1;}
+ try{if(!Module.gooseHost&&!navigator.clipboard?.readText)throw Error('Clipboard API unavailable');const text=Module.gooseHost?await Module.gooseHost.request('clipboard-read'):await navigator.clipboard.readText(),bytes=new TextEncoder().encode(text);if(out&&cap>0)HEAPU8.set(bytes.subarray(0,cap),out);return bytes.length;}catch(e){err('Clipboard read failed: '+e.message);return -1;}
 });
 EM_ASYNC_JS(int,web_clip_write,(const uint8_t *data,int len),{
- try{if(!navigator.clipboard?.writeText)throw Error('Clipboard API unavailable');await navigator.clipboard.writeText(new TextDecoder().decode(HEAPU8.subarray(data,data+len)));return 1;}catch(e){err('Clipboard write failed: '+e.message);return 0;}
+ try{const text=new TextDecoder().decode(HEAPU8.subarray(data,data+len));if(Module.gooseHost)await Module.gooseHost.request('clipboard-write',{text});else{if(!navigator.clipboard?.writeText)throw Error('Clipboard API unavailable');await navigator.clipboard.writeText(text);}return 1;}catch(e){err('Clipboard write failed: '+e.message);return 0;}
 });
 #endif
 uint8_t gs_gfx_mouse_in_window(void){return g_webgl_gfx.mouse_inside;}
@@ -242,6 +243,11 @@ static bool on_key(int type,const EmscriptenKeyboardEvent *e,void *unused){
     /* Keep printable keypress events enabled for text widgets. */
     return !strcmp(e->code,"F5") || !strcmp(e->code,"F9") || !strcmp(e->code,"F12") || !strncmp(e->key,"Arrow",5) || !strcmp(name,"Tab") || !strcmp(name,"Escape");
 }
+EMSCRIPTEN_KEEPALIVE void goose_web_key_event(const uint8_t *name,int len,int down,int mods,int repeat,int keycode){
+ if(gs_gfx_inject_key((gs_gfx_bytes){(uint8_t*)name,len},down)&&g_webgl_gfx.event_count){gs_gfx_event *e=&g_webgl_gfx.events[g_webgl_gfx.event_count-1];e->mods=mods;e->repeat=repeat;e->keycode=keycode;}
+}
+EMSCRIPTEN_KEEPALIVE void goose_web_focus_event(int focused){gs_gfx_inject_focus(focused);}
+EMSCRIPTEN_KEEPALIVE void goose_web_wheel_event(float x,float y){g_webgl_gfx.mouse_wheel+=y;if(g_webgl_gfx.event_count<256){gs_gfx_event *e=&g_webgl_gfx.events[g_webgl_gfx.event_count++];memset(e,0,sizeof *e);e->kind=GS_GFX_EVENT_MOUSE_WHEEL;e->x=x;e->y=y;}}
 EMSCRIPTEN_KEEPALIVE void goose_web_pointer(int kind,float x,float y,int button,int down,float dx,float dy,int clicks){
  g_webgl_gfx.mouse_dx+=dx;g_webgl_gfx.mouse_dy+=dy;
  if(kind==8){g_webgl_gfx.mouse_inside=down!=0;return;}
@@ -273,10 +279,12 @@ static bool on_wheel(int type,const EmscriptenWheelEvent *e,void *unused){
 static bool on_focus(int type,const EmscriptenFocusEvent *e,void *unused){(void)e;(void)unused;gs_gfx_inject_focus(type==EMSCRIPTEN_EVENT_FOCUS);return false;}
 void gfx_install_input(void){
  g_webgl_gfx.focused=true;g_webgl_gfx.cursor_visible=true;
+ if(EM_ASM_INT({return !!Module.gooseHost;}))return;
  emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,NULL,true,on_key);emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,NULL,true,on_key);
  emscripten_set_wheel_callback("#canvas",NULL,true,on_wheel);emscripten_set_blur_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,NULL,true,on_focus);emscripten_set_focus_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,NULL,true,on_focus);install_pointer();
 }
 void gfx_remove_input(void){
+ if(EM_ASM_INT({return !!Module.gooseHost;}))return;
  emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,NULL,true,NULL);emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,NULL,true,NULL);
  emscripten_set_wheel_callback("#canvas",NULL,true,NULL);emscripten_set_blur_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,NULL,true,NULL);emscripten_set_focus_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,NULL,true,NULL);
  EM_ASM({Module.gooseInput?.remove();});
