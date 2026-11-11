@@ -1,35 +1,3 @@
-name: Build & Publish Goose WebAssembly
-
-on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-  release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      publish:
-        description: 'Publish package to GitHub Packages'
-        required: false
-        type: boolean
-        default: false
-
-permissions:
-  contents: write
-  packages: write
-
-jobs:
-  build-and-publish:
-    name: Build & Publish Goose WASM
-    # Pin the image so ubuntu-latest cannot move this build to a new distro.
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Checkout Repository with Submodules
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
           fetch-depth: 1
 
       - name: Setup Emscripten SDK
@@ -69,7 +37,7 @@ jobs:
         run: npm run build:shader-tools
 
       - name: Build Official Goose Demos
-        run: npm run build:demos && npm run build:browser-probes && npm run build:runner-fixtures
+        run: npm run build:demos && npm run build:browser-probes
 
       - name: Install Chromium for Real WebGL Tests
         # GitHub-hosted Ubuntu provides Chromium's runtime libraries.
