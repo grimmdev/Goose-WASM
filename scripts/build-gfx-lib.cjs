@@ -1,23 +1,8 @@
-const { execSync } = require('child_process');
-const path = require('path');
-const fs = require('fs');
-
-console.log('=== Compiling libgoose_gfx_web.a (Gate G3) ===');
-
-const base = path.resolve(__dirname, '..');
-const outDir = path.join(base, 'build', 'web-libs');
-const files = ['gfx_device.c', 'gfx_resources.c', 'gfx_pipeline.c', 'gfx_draw.c', 'gfx_input.c'];
-const objs = [];
-
-for (const f of files) {
-  const cPath = path.join(base, 'platform', 'web', f);
-  const oPath = path.join(outDir, f.replace('.c', '.o'));
-  execSync(`emcc -std=gnu11 -O2 -w -I"${path.join(base, 'platform', 'include')}" -I"${path.join(base, 'platform', 'web')}" -c "${cPath}" -o "${oPath}"`);
-  objs.push(`"${oPath}"`);
+const fs=require('fs'),path=require('path'),{runTool}=require('./tool-runner.cjs');
+const root=path.resolve(__dirname,'..'),out=path.join(root,'build/web-libs');fs.mkdirSync(out,{recursive:true});
+const objects=[];
+for(const file of ['gfx_device.c','gfx_resources.c','gfx_pipeline.c','gfx_draw.c','gfx_input.c','web_gamepad.c']){
+ const object=path.join(out,file.replace('.c','.o'));objects.push(object);
+ runTool('emcc',['-std=gnu11','-O2','-I',path.join(root,'platform/include'),'-I',path.join(root,'platform/web'),'-I',path.join(root,'goose_gfx/third_party/nuklear/example'),'-c',path.join(root,'platform/web',file),'-o',object],{stdio:'inherit'});
 }
-
-const libGfx = path.join(outDir, 'libgoose_gfx_web.a');
-execSync(`emar rcs "${libGfx}" ${objs.join(' ')}`);
-console.log('✓ Successfully built', libGfx, '(' + fs.statSync(libGfx).size + ' bytes)');
-console.log('=== Gate G3 GFX Library Completed! ===');
-
+runTool('emar',['rcs',path.join(out,'libgoose_gfx_web.a'),...objects]);

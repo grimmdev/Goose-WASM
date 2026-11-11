@@ -45,6 +45,10 @@ esbuild.buildSync({
   external: ["./goose_linter", "./goose_linter.js"],
 });
 
+// The compiler is linked in both module formats; browser ESM must import its ESM factory.
+const esmIndex = path.join(distDir, "index.mjs");
+fs.writeFileSync(esmIndex, fs.readFileSync(esmIndex, "utf8").replaceAll('from "./goose_linter.js"', 'from "./goose_linter.mjs"'));
+
 // Bundle renderer.ts (CJS and ESM)
 esbuild.buildSync({
   entryPoints: [path.join(srcDir, "renderer.ts")],

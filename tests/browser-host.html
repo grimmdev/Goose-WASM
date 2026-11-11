@@ -1,0 +1,23 @@
+<!doctype html><meta charset="utf-8"><canvas id="canvas"></canvas><script type="module">
+const params=new URLSearchParams(location.search),demo=params.get('demo');
+window.__testResult=null;let draws=0,shaderChecks=0;
+const arrayDraw=WebGL2RenderingContext.prototype.drawArraysInstanced;
+WebGL2RenderingContext.prototype.drawArraysInstanced=function(...args){draws++;return arrayDraw.apply(this,args)};
+const originalDraw=WebGL2RenderingContext.prototype.drawElementsInstanced,originalCompile=WebGL2RenderingContext.prototype.compileShader;
+WebGL2RenderingContext.prototype.drawElementsInstanced=function(...args){draws++;return originalDraw.apply(this,args)};
+WebGL2RenderingContext.prototype.compileShader=function(shader){originalCompile.call(this,shader);shaderChecks++;if(!this.getShaderParameter(shader,this.COMPILE_STATUS))throw new Error(this.getShaderInfoLog(shader));};
+try{
+ const folders={cube:'g3_cube',physics:'g5_physics',ui:'g4_ui',planar2d:'g6_planar2d',minecraft:'g7_minecraft',doom:'g8_doom'},base=new URL('../build/'+folders[demo]+'/',location.href);
+ const {default:create}=await import(new URL('game.mjs',base));const logs=[];
+ const mod=await create({canvas:document.getElementById('canvas'),noInitialRun:true,print:x=>logs.push(x),printErr:x=>logs.push('[stderr] '+x)});
+ const args=['goose_game','--frames',params.get('frames')||'4'];if(demo==='physics')args.push('--boxes','128','--rate','2');if(demo==='doom')args.push('--wad','/assets/freedoom1-e1m1.wad');if(params.get('selftest'))args.splice(1,args.length-1,'--test');
+ const allocations=[],argv=mod._malloc((args.length+1)*4);allocations.push(argv);
+ try{
+  for(let i=0;i<args.length;i++){const n=mod.lengthBytesUTF8(args[i])+1,p=mod._malloc(n);allocations.push(p);mod.stringToUTF8(args[i],p,n);mod.setValue(argv+i*4,p,'i32');}mod.setValue(argv+args.length*4,0,'i32');
+  const code=await mod.ccall('goose_web_run','number',['number','number'],[args.length,argv],{async:true});
+  if(params.get('selftest')){window.__testResult={code,logs,draws,shaderChecks};}else{
+  const filename={cube:'gfx_cube.png',physics:'physics_boxes.png',ui:'ui_todo.png',planar2d:'planar2d.png',minecraft:'mini_minecraft.png',doom:'mini_doom.png'}[demo];const png=Array.from(mod.FS.readFile('/'+filename));
+  window.__testResult={code,logs,png,draws,shaderChecks};}
+ }finally{for(const p of allocations.reverse())mod._free(p);}
+}catch(e){window.__testResult={error:e.stack||String(e),draws,shaderChecks};}
+</script>

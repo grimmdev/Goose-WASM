@@ -1,0 +1,23 @@
+// Build in a disposable copy, never patch or generate inside the submodule.
+const fs=require('fs'),path=require('path'),{execFileSync}=require('child_process'),{runTool}=require('./tool-runner.cjs');
+const root=path.resolve(__dirname,'..'),source=path.resolve(process.argv[2]||path.join(root,'goose'));
+if(!fs.existsSync(path.join(source,'src/main.cpp')))throw new Error('Goose source missing. Run node scripts/fetch-deps.cjs.');
+const work=path.join(root,'build/compiler-source'),build=path.join(work,'build'),dist=path.join(root,'dist');
+fs.rmSync(work,{recursive:true,force:true});
+fs.cpSync(source,work,{recursive:true,filter:p=>path.basename(p)!=='.git' && p!==path.join(source,'build')});
+execFileSync('git',['init','--quiet',work]);
+const patch=path.join(root,'patches/0001-wasm-support.patch');
+execFileSync('git',['-C',work,'apply','--check',patch]);execFileSync('git',['-C',work,'apply',patch]);
+fs.mkdirSync(path.join(build,'generated'),{recursive:true});fs.mkdirSync(path.join(build,'version'),{recursive:true});fs.mkdirSync(dist,{recursive:true});
+fs.copyFileSync(path.join(root,'src/stubs.c'),path.join(work,'src/stubs.c'));
+fs.writeFileSync(path.join(build,'version/goose_version.h'),'#define GOOSE_VERSION "0.1.2-webgl-fix"\n');
+const symbols=['runtime.h','runtime_ext.h'].map(f=>fs.readFileSync(path.join(work,'src/runtime',f),'utf8')).join('\n');
+fs.writeFileSync(path.join(build,'jit_symbols.inc'),Array.from(symbols.matchAll(/^GS_API .*?\b(gs_\w+)\(/gm),m=>`GS_JIT_SYMBOL(${m[1]})\n`).join(''));
+fs.writeFileSync(path.join(build,'generated/builtin_packages.h'),`namespace goose { inline const char *blessed_table=${JSON.stringify(fs.readFileSync(path.join(work,'src/blessed.txt'),'utf8'))};\nextern "C" const goose_symbol *goose_symbols_physics(void); extern "C" const goose_symbol *goose_symbols_gfx(void);\ninline const BuiltinPackage builtin_packages[]={{"physics",goose_symbols_physics,"",nullptr},{"gfx",goose_symbols_gfx,"",nullptr},{nullptr,nullptr,nullptr,nullptr}}; }\n`);
+const include=['src','build/version','third_party/subprocess','third_party/tinycc','build','build/generated'].flatMap(p=>['-I',p]);
+for(const file of ['main','version','progress','process'])runTool('em++',['-std=c++20','-O2','-fexceptions',...include,'-c',`src/${file}.cpp`,'-o',`build/${file}.o`],{cwd:work,stdio:'inherit'});
+for(const file of ['shaderc','jit_runtime','stubs'])runTool('emcc',['-O2','-I','src','-I','build','-I','third_party/cute_spirv','-c',`src/${file}.c`,'-o',`build/${file}.o`],{cwd:work,stdio:'inherit'});
+runTool('em++',['-O2','-fexceptions',...['main','version','progress','process','shaderc','jit_runtime','stubs'].map(x=>`build/${x}.o`),'--embed-file','stdlib@/stdlib','-o',path.join(dist,'goose_linter.js'),'-sALLOW_MEMORY_GROWTH=1','-sSTACK_SIZE=16777216','-sINITIAL_MEMORY=67108864','-sENVIRONMENT=node,web,worker','-sMODULARIZE=1','-sEXPORT_NAME=createGooseLinter','-sSINGLE_FILE=1','-sEXPORTED_RUNTIME_METHODS='+JSON.stringify(['callMain','FS'])],{cwd:work,stdio:'inherit'});
+runTool('em++',['-O2','-fexceptions',...['main','version','progress','process','shaderc','jit_runtime','stubs'].map(x=>`build/${x}.o`),'--embed-file','stdlib@/stdlib','-sEXPORT_ES6=1','-o',path.join(dist,'goose_linter.mjs'),'-sALLOW_MEMORY_GROWTH=1','-sSTACK_SIZE=16777216','-sINITIAL_MEMORY=67108864','-sENVIRONMENT=node,web,worker','-sMODULARIZE=1','-sEXPORT_NAME=createGooseLinter','-sSINGLE_FILE=1','-sEXPORTED_RUNTIME_METHODS='+JSON.stringify(['callMain','FS'])],{cwd:work,stdio:'inherit'});
+fs.copyFileSync(path.join(root,'src/goose_linter.d.ts'),path.join(dist,'goose_linter.d.ts'));
+console.log('Compiler built; canonical Goose submodule unchanged.');

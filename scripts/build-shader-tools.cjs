@@ -1,0 +1,10 @@
+const fs = require('fs'), path = require('path'), { execFileSync } = require('child_process');
+const root = path.resolve(__dirname, '..'), tools = path.join(root, 'build/tools');
+const source = path.join(tools, 'SPIRV-Cross'), revision = '65d7393430f6c7bb0c20b6d53250fe04847cc2ae';
+fs.mkdirSync(tools, { recursive: true });
+const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: 'inherit', ...opts });
+if (!fs.existsSync(path.join(source, '.git'))) run('git', ['clone', '--no-checkout', 'https://github.com/KhronosGroup/SPIRV-Cross.git', source]);
+run('git', ['-C', source, 'checkout', '--detach', revision]);
+run('cmake', ['-S', source, '-B', path.join(tools, 'cross'), '-DSPIRV_CROSS_ENABLE_TESTS=OFF', '-DSPIRV_CROSS_ENABLE_CLI=ON', '-DCMAKE_BUILD_TYPE=Release']);
+run('cmake', ['--build', path.join(tools, 'cross'), '--config', 'Release', '--target', 'spirv-cross', '--parallel', '2']);
+console.log('Shader translator ready. No upstream Goose sources were changed.');

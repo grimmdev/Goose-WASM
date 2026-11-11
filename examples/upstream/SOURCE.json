@@ -1,0 +1,9 @@
+{
+  "source_repository": "https://github.com/aardappel/goose",
+  "commit": "f4637bfb342fb70d42bea0474eab9e62a3c99d68",
+  "build_uses": "goose/samples originals; these copies are review snapshots",
+  "files": {
+    "30_mini_minecraft.goose": "2b641f59018c23d4739bb76fc98663495ccf3202da2e99285e4e1bccd8277f81",
+    "31_mini_doom.goose": "ad867292976290c73a7609cf37ff260331ba490803f39f9e8560275fa430049e"
+  }
+}

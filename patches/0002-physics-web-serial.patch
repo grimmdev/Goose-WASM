@@ -1,0 +1,16 @@
+diff --git a/src/physics_internal.h b/src/physics_internal.h
+--- a/src/physics_internal.h
++++ b/src/physics_internal.h
+@@ -213,7 +213,12 @@
+ /* A count of worker threads within what Box3D takes: 1 to B3_MAX_WORKERS,
+    so a program can ask for as many as the machine has. */
+ static inline int phys_workers(int64_t n) {
++#if defined(__EMSCRIPTEN__)
++    (void)n;
++    return 1; /* Downstream web builds use the serial scheduler. */
++#else
+     return n < 1 ? 1 : n > B3_MAX_WORKERS ? B3_MAX_WORKERS : (int)n;
++#endif
+ }
+ 
+ /* Box3D's null-terminated text, copied into `out` as far as it fits;

@@ -11,14 +11,14 @@ const probes = [
 ];
 
 async function runSemanticsTests() {
-  console.log('=== Running Native Semantic Parity Probes ===');
+  console.log('=== Running Compiled WASM Semantic Probes ===');
   for (const p of probes) {
     const outDir = path.resolve(__dirname, '../build/probe-' + p.id);
     const buildRes = await buildProject({ source: p.src, outDir });
     assert.strictEqual(buildRes.success, true, 'Build must succeed for ' + p.id);
 
     const wasmBytes = fs.readFileSync(buildRes.gameWasm);
-    const createGame = require(buildRes.gameMjs).default;
+    const createGame = (await import(require('url').pathToFileURL(buildRes.gameMjs).href)).default;
 
     let output = [];
     const m = await createGame({
@@ -30,12 +30,12 @@ async function runSemanticsTests() {
       print: (t) => output.push(t),
     });
 
-    m._goose_web_run(0, 0);
+    await m.ccall('goose_web_run', 'number', ['number','number'], [0,0], {async:true});
     const actual = output.join('\n');
     console.log(`✓ ${p.name} (${p.id}): expected='${p.expected.replace(/\n/g, "\\n")}', observed='${actual.replace(/\n/g, "\\n")}'`);
     assert.strictEqual(actual, p.expected, `${p.id} must match expected output`);
   }
-  console.log('✓ All Semantic Probes Passed with 100% Native Parity!\n');
+  console.log('✓ All four compiled WASM semantic probes passed.\n');
 }
 
 if (require.main === module) {

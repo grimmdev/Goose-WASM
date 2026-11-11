@@ -180,14 +180,8 @@ if (fs.existsSync(linterDist)) {
     const { runSemanticsTests } = require('../tests/semantics.test.cjs');
     await runSemanticsTests();
 
-    const { runCubeTest } = require('../tests/cube.test.cjs');
-    await runCubeTest();
-
-    const { runUiTodoTest } = require('../tests/ui_todo.test.cjs');
-    await runUiTodoTest();
-
-    const { runPhysicsBoxesTest } = require('../tests/physics_boxes.test.cjs');
-    await runPhysicsBoxesTest();
+    const { runBrowserTests } = require('../tests/browser.test.cjs');
+    await runBrowserTests();
 
     console.log("=== All Tests & Demo Acceptance Passed Successfully! ===");
   }).catch((err) => {
@@ -195,6 +189,5 @@ if (fs.existsSync(linterDist)) {
     process.exit(1);
   });
 } else {
-  console.log("Note: goose_linter.js not present yet in dist/. Skipping WASM runtime execution test.");
-  console.log("=== Renderer Tests Passed! ===");
+  throw new Error("Build dist/goose_linter.js before running acceptance tests: npm run build.");
 }

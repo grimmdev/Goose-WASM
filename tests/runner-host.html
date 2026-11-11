@@ -1,0 +1,6 @@
+<!doctype html><canvas id="game" width="640" height="480"></canvas><script type="module">
+import {CompiledGooseRunner} from '../dist/index.mjs';
+window.runnerResult=null;const logs=[];
+const runner=new CompiledGooseRunner({canvas:document.querySelector('canvas'),args:['--frames','4'],onLog:x=>logs.push(x)});
+try{await runner.run('../build/g3_cube/game.mjs','../build/g3_cube/game.wasm');runner.stop();window.runnerResult={logs,running:runner.isRunning(),restored:!!document.querySelector('#game')};}catch(e){window.runnerResult={error:String(e),logs};}
+</script>

@@ -19,6 +19,7 @@ typedef int GLint;
 typedef int GLsizei;
 typedef unsigned int GLenum;
 typedef float GLfloat;
+typedef intptr_t GLintptr;
 #endif
 
 #include "gfx_api.h"
@@ -41,6 +42,9 @@ typedef struct {
     int32_t height;
     int32_t format;
     bool is_depth;
+    gs_gfx_texture_desc desc;
+    GLenum internal_format, pixel_format, pixel_type;
+    int bytes_per_pixel, levels;
 } WebGLTextureItem;
 
 typedef struct {
@@ -51,14 +55,27 @@ typedef struct {
 } WebGLSamplerItem;
 
 typedef struct {
+    uint8_t location, slot, components, integer, normalized;
+    GLenum type;
+    uint32_t offset;
+} WebGLAttribute;
+typedef struct { GLuint buffer; int stage, slot, point; uint32_t size; } WebGLUniform;
+typedef struct {
     GLuint gl_program;
     gs_gfx_pipeline_desc desc;
     GLint u_time_loc;
     GLint u_res_loc;
+    GLuint vao;
+    WebGLAttribute attributes[16];
+    uint32_t strides[2];
+    int attribute_count, uniform_count;
+    WebGLUniform uniforms[32];
+    int sampler_units[2][16];
 } WebGLPipelineItem;
 
 typedef struct {
     bool is_open;
+    bool quit_requested;
     int64_t width;
     int64_t height;
     int64_t open_count;
@@ -71,6 +88,7 @@ typedef struct {
 
     /* Active pass state */
     bool in_pass;
+    GLuint pass_fbo;
     WebGLTextureItem *current_target;
     WebGLPipelineItem *bound_pipe;
     GLuint bound_vao;
@@ -78,6 +96,8 @@ typedef struct {
     GLintptr bound_vb_offsets[4];
     GLuint bound_ib;
     int32_t bound_index_size;
+    GLintptr bound_ib_offset;
+    int context;
 
     /* Handle storage pools */
     WebGLBufferItem buffers[256];
@@ -101,14 +121,26 @@ typedef struct {
     float mouse_dx, mouse_dy;
     float mouse_wheel;
     bool mouse_buttons[8];
+    bool focused, mouse_inside, cursor_visible, text_enabled;
     bool keys_down[512];
     bool keys_pressed[512];
     bool keys_released[512];
 } WebGLGfxState;
 
 extern WebGLGfxState g_webgl_gfx;
+#define GFX_INDEX(h) ((h).id & 0xfffffu)
+uint32_t gfx_allocate(int kind,unsigned limit);
+int gfx_valid(int kind,uint32_t handle);
+void gfx_forget(int kind,uint32_t handle);
+uint32_t gfx_live_handle(int kind,unsigned index);
 
+void gfx_poll_gamepads(void);
+void gfx_reset_gamepads(void);
 void gfx_set_error(const char *msg);
+void gfx_present(void);
+void gfx_install_input(void);
+void gfx_remove_input(void);
+void gfx_configure_vertices(void);
 
 #ifdef __cplusplus
 }

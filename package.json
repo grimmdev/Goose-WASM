@@ -35,14 +35,22 @@
     "README.md"
   ],
   "scripts": {
-    "build:wasm": "bash scripts/build.sh",
+    "build:wasm": "node scripts/build-compiler.cjs",
     "build:ts": "node scripts/bundle.cjs",
     "build": "npm run build:wasm && npm run build:ts",
-    "test": "node scripts/test.cjs"
+    "test": "npm run test:shaders && node scripts/test.cjs",
+    "deps": "node scripts/fetch-deps.cjs",
+    "build:shader-tools": "node scripts/build-shader-tools.cjs",
+    "build:web-libs": "node scripts/build-web-libs.cjs",
+    "build:demos": "node scripts/build-demos.cjs",
+    "test:shaders": "node tests/web-shaders.test.cjs",
+    "test:browser": "node tests/browser.test.cjs",
+    "build:browser-probes": "node scripts/build-browser-probes.cjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "playwright": "1.62.1"
   },
   "keywords": [
     "goose",

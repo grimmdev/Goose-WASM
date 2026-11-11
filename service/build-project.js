@@ -1,134 +1,45 @@
-/**
- * Build Project Service (Gate G1)
- *
- * Implements the compilation pipeline specified in Section 12:
- * Project Snapshot -> Goose Transpilation -> emcc C Compilation -> game.wasm + game.mjs
- */
-
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
-
-async function buildProject(options) {
-  const {
-    source,
-    files = {},
-    entryFile = '/main.goose',
-    outDir = path.resolve(__dirname, '../build/out'),
-    linterPath = path.resolve(__dirname, '../dist/goose_linter.js'),
-  } = options;
-
-  fs.mkdirSync(outDir, { recursive: true });
-
-  const createGooseLinter = require(linterPath);
-  const mod = await createGooseLinter({ noInitialRun: true });
-
-  const { compileGoose } = require('../dist/index.js');
-
-  const compileRes = await compileGoose(mod, source, {
-    transpile: true,
-    entryFile,
-    files,
-  });
-
-  if (!compileRes.success || !compileRes.transpiledC) {
-    return {
-      success: false,
-      stage: 'transpile',
-      diagnostics: compileRes.diagnostics,
-      error: 'Goose C transpilation failed',
-      stdout: compileRes.stdout,
-      stderr: compileRes.stderr,
-    };
-  }
-
-  // Write game.c
-  const gameCPath = path.join(outDir, 'game.c');
-  const gameOPath = path.join(outDir, 'game.o');
-  const entryCPath = path.resolve(__dirname, '../platform/web/game_entry.c');
-  const entryOPath = path.join(outDir, 'entry.o');
-
-  fs.writeFileSync(gameCPath, compileRes.transpiledC, 'utf8');
-
-  // Step 1: Compile game.c to game.o with emcc (-Dmain=goose_user_main)
-  try {
-    execSync(`emcc -std=c11 -O2 -w -Dmain=goose_user_main -DGS_STACK_RESERVE="(16ull << 20)" -DGS_STACK_GAP="(64ull << 10)" -DGS_STACK_BUDGET="(256ull << 20)" -c "${gameCPath}" -o "${gameOPath}"`);
-  } catch (err) {
-    return {
-      success: false,
-      stage: 'emcc_compile_game',
-      error: String(err),
-    };
-  }
-
-  // Step 2: Compile game_entry.c to entry.o
-  try {
-    execSync(`emcc -std=c11 -O2 -w -c "${entryCPath}" -o "${entryOPath}"`);
-  } catch (err) {
-    return {
-      success: false,
-      stage: 'emcc_compile_entry',
-      error: String(err),
-    };
-  }
-
-  // Step 3: Link into game.mjs and game.wasm with native libraries
-  const webLibsDir = path.resolve(__dirname, '../build/web-libs');
-  const libBox3d = path.join(webLibsDir, 'libbox3d.a');
-  const libPhys = path.join(webLibsDir, 'libgoose_physics_web.a');
-  const libUi = path.join(webLibsDir, 'libgoose_ui_web.a');
-  const libGfx = path.join(webLibsDir, 'libgoose_gfx_web.a');
-  const runtimeO = path.join(webLibsDir, 'goose_runtime.o');
-
-  const outMjs = path.join(outDir, 'game.mjs');
-  const outWasm = path.join(outDir, 'game.wasm');
-
-  const linkFlags = [
-    `"${gameOPath}"`,
-    `"${entryOPath}"`,
-    fs.existsSync(runtimeO) ? `"${runtimeO}"` : '',
-    fs.existsSync(libPhys) ? `"${libPhys}"` : '',
-    fs.existsSync(libBox3d) ? `"${libBox3d}"` : '',
-    fs.existsSync(libUi) ? `"${libUi}"` : '',
-    fs.existsSync(libGfx) ? `"${libGfx}"` : '',
-    '-O2',
-    '-O2',
-    '-sMODULARIZE=1',
-    '-sEXPORT_ES6=1',
-    '-sEXPORT_NAME=createGooseGame',
-    '-sENVIRONMENT=worker,web,node',
-    '-sALLOW_MEMORY_GROWTH=1',
-    '-sINITIAL_MEMORY=134217728',
-    '-sMAXIMUM_MEMORY=536870912',
-    '-sSTACK_SIZE=16777216',
-    '-sFORCE_FILESYSTEM=1',
-    '-sASYNCIFY=1',
-    '-sOFFSCREENCANVAS_SUPPORT=1',
-    '-sMIN_WEBGL_VERSION=2',
-    '-sMAX_WEBGL_VERSION=2',
-    '-sEXPORTED_FUNCTIONS=["_goose_web_run","_malloc","_free"]',
-    '-sEXPORTED_RUNTIME_METHODS=["ccall","cwrap","FS","lengthBytesUTF8","stringToUTF8","setValue","getValue"]',
-    `-o "${outMjs}"`,
-  ].filter(Boolean).join(' ');
-
-  try {
-    execSync(`emcc ${linkFlags}`);
-  } catch (err) {
-    return {
-      success: false,
-      stage: 'emcc_link',
-      error: String(err),
-    };
-  }
-
-  return {
-    success: true,
-    outDir,
-    gameMjs: outMjs,
-    gameWasm: outWasm,
-    wasmSize: fs.statSync(outWasm).size,
-    mjsSize: fs.statSync(outMjs).size,
-  };
+const fs=require('fs'),path=require('path');
+const {runTool}=require('../scripts/tool-runner.cjs');
+const {translateShaderBlobs,findTranslator}=require('./web-shaders.cjs');
+async function buildProject(options){
+    const root=path.resolve(__dirname,'..'),outDir=path.resolve(options.outDir||path.join(root,'build/out'));
+    fs.mkdirSync(outDir,{recursive:true});
+    const output=path.join(outDir,'game.mjs'),wasm=path.join(outDir,'game.wasm');
+    for(const p of [output,wasm])if(fs.existsSync(p))fs.unlinkSync(p);
+    let stage='transpile';
+    try{
+        const createLinter=require(options.linterPath||path.join(root,'dist/goose_linter.js'));
+        const mod=await createLinter({noInitialRun:true});const {compileGoose}=require('../dist/index.js');
+        const compiled=await compileGoose(mod,options.source,{transpile:true,dumpAst:false,standalone:true,entryFile:options.entryFile||'/main.goose',files:options.files||{}});
+        if(!compiled.success || !compiled.transpiledC)return {...compiled,success:false,stage,error:'Goose C generation failed'};
+        stage='shader_translation';
+        const converted=translateShaderBlobs(compiled.transpiledC,{executable:findTranslator(root),workDir:path.join(outDir,'shaders')});
+        fs.writeFileSync(path.join(outDir,'game.c'),converted.cSource);
+        fs.writeFileSync(path.join(outDir,'shaders.json'),JSON.stringify(converted.shaders,null,2));
+        const tool=options.emcc||process.env.EMCC||'emcc';
+        const run=args=>runTool(tool,args,{stdio:'pipe',maxBuffer:16*1024*1024});
+        stage='emcc_compile_game';
+        run(['-std=gnu11','-O2','-Dmain=goose_user_main','-DGS_STACK_RESERVE=(16ull << 20)','-DGS_STACK_GAP=(64ull << 10)','-DGS_STACK_BUDGET=(256ull << 20)','-c',path.join(outDir,'game.c'),'-o',path.join(outDir,'game.o')]);
+        stage='emcc_compile_entry';run(['-std=gnu11','-O2','-c',path.join(root,'platform/web/game_entry.c'),'-o',path.join(outDir,'entry.o')]);
+        const assetFlags=[];
+        if(options.assets){
+            const assetDir=path.join(outDir,'assets');fs.rmSync(assetDir,{recursive:true,force:true});fs.mkdirSync(assetDir,{recursive:true});
+            for(const [name,data] of Object.entries(options.assets)){
+                if(!name || name.includes('\\') || name.startsWith('/') || name.split('/').some(x=>x==='..'||x==='.'||!x))throw new Error('Invalid asset path: '+name);
+                const target=path.join(assetDir,name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,data);
+            }
+            assetFlags.push('--embed-file',assetDir+'@/assets');
+        }
+        stage='emcc_link';
+        const libraries=['libgoose_physics_web.a','libbox3d.a','libgoose_ui_web.a','libgoose_audio_web.a','libgoose_gfx_web.a'].map(x=>path.join(root,'build/web-libs',x));
+        for(const lib of libraries)if(!fs.existsSync(lib))throw new Error(`Required archive missing: ${lib}. Run npm run build:web-libs.`);
+        run(['--no-entry',path.join(outDir,'game.o'),path.join(outDir,'entry.o'),...libraries,'-lm','-O2',...assetFlags,
+            '-sMODULARIZE=1','-sEXPORT_ES6=1','-sEXPORT_NAME=createGooseGame','-sENVIRONMENT=web,worker,node',
+            '-sALLOW_MEMORY_GROWTH=1','-sINITIAL_MEMORY=134217728','-sMAXIMUM_MEMORY=536870912','-sSTACK_SIZE=16777216',
+            '-sFORCE_FILESYSTEM=1','-sASYNCIFY=1','-sOFFSCREENCANVAS_SUPPORT=1','-sMIN_WEBGL_VERSION=2','-sMAX_WEBGL_VERSION=2',
+            '-sEXPORTED_FUNCTIONS='+JSON.stringify(['_goose_web_run','_malloc','_free']),
+            '-sEXPORTED_RUNTIME_METHODS='+JSON.stringify(['ccall','FS','lengthBytesUTF8','stringToUTF8','setValue','getValue']),'-o',output]);
+        return {success:true,outDir,gameMjs:output,gameWasm:wasm,shaders:converted.shaders,wasmSize:fs.statSync(wasm).size,mjsSize:fs.statSync(output).size};
+    }catch(e){return {success:false,stage,error:e.message,stderr:e.stderr?.toString()||'',stdout:e.stdout?.toString()||''};}
 }
-
-module.exports = { buildProject };
+module.exports={buildProject};

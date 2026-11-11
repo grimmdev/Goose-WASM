@@ -1,0 +1,5 @@
+<!doctype html><canvas id="canvas" tabindex="0" style="width:640px;height:480px"></canvas><script type="module">
+import create from '../build/web-probe/probe.mjs';
+window.probeReady=false;
+try{const mod=await create({canvas:document.querySelector('canvas'),noInitialRun:true});window.probe=(op,a=0,b=0)=>mod.ccall('probe','number',['number','number','number'],[op,a,b],{async:true});window.probeReady=await window.probe(0);}catch(e){window.probeError=String(e);}
+</script>

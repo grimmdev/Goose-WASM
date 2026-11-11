@@ -27,6 +27,7 @@ export interface CompileResult {
 export interface CompileOptions {
   stdlibPath?: string;
   transpile?: boolean;
+  standalone?: boolean;
   dumpAst?: boolean;
   entryFile?: string;
   files?: Record<string, string>;
@@ -136,6 +137,7 @@ export async function compileGoose(
       mod.FS.mkdirTree("/data");
 
       const pkgFiles: Record<string, string> = {
+        "/web_input.goose": "packages/web_input.goose",
         "/home/web_user/.goose/pkg/github.com/aardappel/goose_physics/v1/physics.goose": "packages/physics/physics.goose",
         "/home/web_user/.goose/pkg/github.com/aardappel/goose_physics/v1/physics.build": "packages/physics/physics.build",
         "/home/web_user/.goose/pkg/github.com/aardappel/goose_gfx/v1/gfx.goose": "packages/gfx/gfx.goose",
@@ -279,6 +281,7 @@ export async function compileGoose(
 
       try {
         transpileExit = mod.callMain([
+          ...(options.standalone ? ["--standalone"] : []),
           "-o",
           outPath,
           entryFile,

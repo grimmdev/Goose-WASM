@@ -60,10 +60,18 @@ jobs:
       - name: Build Native Web Static Libraries
         run: |
           node scripts/build-web-libs.cjs
-          node scripts/build-gfx-lib.cjs
 
       - name: Bundle TypeScript API & WebGL Renderer
         run: node scripts/bundle.cjs
+
+      - name: Build Pinned Shader Translator
+        run: npm run build:shader-tools
+
+      - name: Build Official Goose Demos
+        run: npm run build:demos && npm run build:browser-probes
+
+      - name: Install Chromium for Real WebGL Tests
+        run: npx playwright install --with-deps chromium
 
       - name: Run Package Integration & Acceptance Tests
         run: npm test

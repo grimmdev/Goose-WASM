@@ -1,0 +1,130 @@
+diff --git a/src/audio/audio.c b/src/audio/audio.c
+--- a/src/audio/audio.c
++++ b/src/audio/audio.c
+@@ -2,7 +2,12 @@
+    SDL's stream lock protects all shared state. PCM copying happens outside
+    that lock so loading a sound does not block playback for its duration. */
+ #include "audio_api.h"
++#if defined(__EMSCRIPTEN__)
++#include <emscripten.h>
++#include <stdbool.h>
++#else
+ #include <SDL3/SDL.h>
++#endif
+ #include <math.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -29,7 +34,9 @@
+ static struct {
+     bool open, offline;
+     int rate;
++#if !defined(__EMSCRIPTEN__)
+     SDL_AudioStream *stream;
++#endif
+     audio_sound sounds[AUDIO_SOUNDS];
+     audio_voice voices[AUDIO_VOICES];
+     char error[1024];
+@@ -42,16 +49,22 @@
+ } audio;
+ 
+ static void audio_lock(void) {
++#if !defined(__EMSCRIPTEN__)
+     if (audio.stream) SDL_LockAudioStream(audio.stream);
++#endif
+ }
+ static void audio_unlock(void) {
++#if !defined(__EMSCRIPTEN__)
+     if (audio.stream) SDL_UnlockAudioStream(audio.stream);
++#endif
+ }
+ static uint8_t audio_fail(const char *message) {
+     snprintf(audio.error, sizeof audio.error, "%s", message);
+     return 0;
+ }
++#if !defined(__EMSCRIPTEN__)
+ static uint8_t audio_sdl_fail(void) { return audio_fail(SDL_GetError()); }
++#endif
+ static bool audio_rate(int64_t rate) { return rate >= 8000 && rate <= 192000; }
+ 
+ static bool audio_params(float volume, float pan, float pitch) {
+@@ -120,6 +133,9 @@
+     }
+ }
+ 
++#if defined(__EMSCRIPTEN__)
++#include "web_audio_device.h"
++#else
+ static void SDLCALL audio_callback(void *userdata, SDL_AudioStream *stream,
+                                    int additional, int total) {
+     (void)userdata;
+@@ -140,7 +156,14 @@
+     }
+ }
+ 
+-uint8_t gs_audio_available(void) { return 1; }
++#endif
++uint8_t gs_audio_available(void) {
++#if defined(__EMSCRIPTEN__)
++    return web_audio_available();
++#else
++    return 1;
++#endif
++}
+ 
+ uint8_t gs_audio_open(int64_t sample_rate, uint8_t offline) {
+     audio_lock();
+@@ -154,6 +177,10 @@
+     audio.rate = (int)sample_rate;
+     audio.offline = offline != 0;
+     if (offline) { audio.open = true; return 1; }
++#if defined(__EMSCRIPTEN__)
++    if(!web_audio_open(audio.rate))return audio_fail("Web Audio device initialization failed");
++    audio.open=true;
++#else
+     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) return audio_sdl_fail();
+     SDL_AudioSpec spec = { SDL_AUDIO_F32, 2, (int)sample_rate };
+     audio.stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+@@ -176,16 +203,21 @@
+         gs_audio_close();
+         return 0;
+     }
++    #endif
+     return 1;
+ }
+ 
+ void gs_audio_close(void) {
+     // Destroy waits for the callback and closes the device before samples free.
++#if defined(__EMSCRIPTEN__)
++    web_audio_close();
++#else
+     if (audio.stream) {
+         SDL_DestroyAudioStream(audio.stream);
+         audio.stream = NULL;
+         SDL_QuitSubSystem(SDL_INIT_AUDIO);
+     }
++#endif
+     for (int i = 0; i < AUDIO_SOUNDS; ++i) free(audio.sounds[i].samples);
+     memset(audio.sounds, 0, sizeof audio.sounds);
+     memset(audio.voices, 0, sizeof audio.voices);
+@@ -333,6 +365,13 @@
+         audio_sound *sound = slot->sound;
+         double step = (double)sound->rate / audio.rate * slot->pitch;
+         double frames = slot->position;
++#if defined(__EMSCRIPTEN__)
++        if(!audio.offline){
++            frames-=web_audio_ahead_frames()*step;
++            if(slot->loop){frames=fmod(frames,(double)sound->frames);if(frames<0)frames+=sound->frames;}
++            else if(frames<0)frames=0;
++        }
++#else
+         if (audio.stream) {
+             double ahead = SDL_GetAudioStreamQueued(audio.stream) / 8.0 + audio.device_frames;
+             double since = (double)(SDL_GetTicksNS() - audio.mix_ticks) * 1e-9 * audio.rate;
+@@ -341,6 +380,7 @@
+             frames -= (ahead - since) * step;
+             if (frames < 0) frames = slot->loop ? frames + (double)sound->frames : 0;
+         }
++#endif
+         seconds = frames / sound->rate;
+     }
+     audio_unlock();

@@ -34,6 +34,7 @@
     .controls {
       display: flex;
       gap: 12px;
+      flex-wrap: wrap;
       margin-bottom: 16px;
     }
     button {
@@ -56,6 +57,7 @@
       border-color: #38bdf8;
     }
     .viewport {
+      width: min(1000px, 100%);
       position: relative;
       background: #020617;
       border: 1px solid #1e293b;
@@ -76,8 +78,8 @@
     }
     .log-box {
       margin-top: 12px;
-      width: 1000px;
-      max-height: 120px;
+      width: min(1000px, 100%);
+      max-height: 160px;
       background: #020617;
       border: 1px solid #1e293b;
       border-radius: 6px;
@@ -94,100 +96,28 @@
 
   <header>
     <h1>Goose WebAssembly Live Demos</h1>
-    <p>Real compiler-emitted C &bull; WebGL2 native renderer &bull; Box3D Physics &bull; Nuklear UI</p>
+    <p>Compiled Goose &bull; WebGL2 &bull; Box3D &bull; Nuklear UI &bull; Escape exits • 2D: arrows/stick move, click/tap/A jumps</p>
   </header>
 
   <div class="controls">
     <button id="btn-physics" class="active" onclick="switchDemo('physics')">28_physics_boxes (Box3D)</button>
     <button id="btn-cube" onclick="switchDemo('cube')">27_gfx_cube (WebGL2)</button>
     <button id="btn-ui" onclick="switchDemo('ui')">29_ui_todo (Nuklear UI)</button>
-  </div>
+  <button id="btn-minecraft" onclick="switchDemo('minecraft')">30_mini_minecraft</button>
+<button id="btn-doom" onclick="switchDemo('doom')">31_mini_doom / Freedoom</button>
+<button id="btn-planar2d" onclick="switchDemo('planar2d')">2D sprites + planar physics</button>
+</div>
 
+  <p id="demo-help" style="max-width:1000px;margin:0 0 12px;line-height:1.5"></p>
   <div class="viewport">
-    <canvas id="canvas" width="1280" height="720"></canvas>
+    <iframe id="demo-frame" title="Goose demo" style="display:block;width:1000px;max-width:100%;height:600px;border:0"></iframe>
   </div>
 
   <div class="status" id="status">Status: Initializing demo...</div>
   <div class="log-box" id="logBox">Logs will appear here...</div>
 
-  <script type="module">
-    let currentModule = null;
-
-    const demos = {
-      physics: {
-        dir: '../build/g5_physics',
-        args: ['goose_game', '--boxes', '1000', '--rate', '10'],
-        w: 1280, h: 720
-      },
-      cube: {
-        dir: '../build/g3_cube',
-        args: ['goose_game'],
-        w: 640, h: 480
-      },
-      ui: {
-        dir: '../build/g4_ui',
-        args: ['goose_game'],
-        w: 760, h: 520
-      }
-    };
-
-    window.switchDemo = async function(name) {
-      document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
-      document.getElementById('btn-' + name)?.classList.add('active');
-
-      const statusEl = document.getElementById('status');
-      const logBox = document.getElementById('logBox');
-      const canvas = document.getElementById('canvas');
-
-      const conf = demos[name];
-      canvas.width = conf.w;
-      canvas.height = conf.h;
-
-      statusEl.textContent = `Status: Loading ${name}...`;
-      logBox.textContent = `[Info] Loading ${name} from ${conf.dir}...\n`;
-
-      try {
-        const factory = (await import(`${conf.dir}/game.mjs`)).default;
-        const mod = await factory({
-          canvas,
-          noInitialRun: true,
-          print: (t) => {
-            logBox.textContent += `[stdout] ${t}\n`;
-            logBox.scrollTop = logBox.scrollHeight;
-          },
-          printErr: (t) => {
-            logBox.textContent += `[stderr] ${t}\n`;
-            logBox.scrollTop = logBox.scrollHeight;
-          }
-        });
-
-        currentModule = mod;
-        statusEl.textContent = `Status: Running ${name} at 60 FPS`;
-
-        // Allocate argc/argv
-        const args = conf.args;
-        const ptrSize = 4;
-        const argvPtr = mod._malloc((args.length + 1) * ptrSize);
-        for (let i = 0; i < args.length; i++) {
-          const len = mod.lengthBytesUTF8(args[i]) + 1;
-          const argPtr = mod._malloc(len);
-          mod.stringToUTF8(args[i], argPtr, len);
-          mod.setValue(argvPtr + i * ptrSize, argPtr, 'i32');
-        }
-        mod.setValue(argvPtr + args.length * ptrSize, 0, 'i32');
-
-        mod.ccall('goose_web_run', 'number', ['number', 'number'], [args.length, argvPtr], { async: true });
-      } catch (err) {
-        statusEl.textContent = `Status: Error - ${err.message}`;
-        logBox.textContent += `[error] ${err.stack || err.message}\n`;
-      }
-    };
-
-    // Auto-start physics demo on load
-    window.addEventListener('DOMContentLoaded', () => {
-      window.switchDemo('physics');
-    });
-  </script>
+  <script type="module" src="index.mjs"></script>
+<p style="margin-top:12px"><a style="color:#94a3b8" href="licenses/Freedoom-COPYING.adoc">Freedoom license</a> · <a style="color:#94a3b8" href="licenses/Freedoom-CREDITS">Freedoom credits</a></p>
 </body>
 </html>
 
