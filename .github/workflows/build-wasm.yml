@@ -210,7 +210,7 @@ jobs:
           scope: '@grimmdev'
 
       - name: Publish exact package built from the selected commit
-        run: npm publish release/grimmdev-goose-wasm-*.tgz
+        run: npm publish ./release/grimmdev-goose-wasm-*.tgz
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
