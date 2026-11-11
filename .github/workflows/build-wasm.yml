@@ -57,10 +57,15 @@ jobs:
       - name: Install Build Dependencies
         run: npm install --ignore-scripts
 
+      - name: Build Native Web Static Libraries
+        run: |
+          node scripts/build-web-libs.cjs
+          node scripts/build-gfx-lib.cjs
+
       - name: Bundle TypeScript API & WebGL Renderer
         run: node scripts/bundle.cjs
 
-      - name: Run Package Integration Tests
+      - name: Run Package Integration & Acceptance Tests
         run: npm test
 
       - name: Upload Build Artifacts

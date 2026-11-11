@@ -1,6 +1,6 @@
 {
   "name": "@grimmdev/goose-wasm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Client-side WebAssembly compiler, linter, transpiler, and real-time WebGL renderer for the Goose programming language",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

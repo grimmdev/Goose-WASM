@@ -1,4 +1,5 @@
 import type { GooseDiagnostic, GooseModule } from "./goose_linter";
+import embeddedPackages from "./embedded_packages.json";
 
 export interface StageResult {
   success: boolean;
@@ -116,6 +117,55 @@ export async function compileGoose(
     } catch (_) {}
   }
 
+  function ensureParentDirs(p: string) {
+    if (!mod.FS || typeof mod.FS.mkdirTree !== "function") return;
+    const parts = p.split("/").slice(0, -1);
+    const dir = parts.join("/");
+    if (dir && dir !== "" && dir !== ".") {
+      try {
+        mod.FS.mkdirTree(dir);
+      } catch (_) {}
+    }
+  }
+
+  function mountBlessedPackages() {
+    if (!mod.FS) return;
+    try {
+      mod.FS.mkdirTree("/home/web_user/.goose/pkg/github.com/aardappel/goose_physics/v1");
+      mod.FS.mkdirTree("/home/web_user/.goose/pkg/github.com/aardappel/goose_gfx/v1");
+      mod.FS.mkdirTree("/data");
+
+      const pkgFiles: Record<string, string> = {
+        "/home/web_user/.goose/pkg/github.com/aardappel/goose_physics/v1/physics.goose": "packages/physics/physics.goose",
+        "/home/web_user/.goose/pkg/github.com/aardappel/goose_physics/v1/physics.build": "packages/physics/physics.build",
+        "/home/web_user/.goose/pkg/github.com/aardappel/goose_gfx/v1/gfx.goose": "packages/gfx/gfx.goose",
+        "/home/web_user/.goose/pkg/github.com/aardappel/goose_gfx/v1/audio.goose": "packages/gfx/audio.goose",
+        "/home/web_user/.goose/pkg/github.com/aardappel/goose_gfx/v1/ui.goose": "packages/gfx/ui.goose",
+        "/home/web_user/.goose/pkg/github.com/aardappel/goose_gfx/v1/gfx.build": "packages/gfx/gfx.build",
+        "/data/Roboto-Regular.ttf": "goose/samples/data/Roboto-Regular.ttf",
+      };
+
+      for (const [targetPath, embeddedKey] of Object.entries(pkgFiles)) {
+        if (!mod.FS.analyzePath(targetPath).exists) {
+          const b64 = (embeddedPackages as any)[embeddedKey];
+          if (b64) {
+            if (typeof (globalThis as any).Buffer !== "undefined") {
+              mod.FS.writeFile(targetPath, (globalThis as any).Buffer.from(b64, "base64"));
+            } else {
+              const binStr = atob(b64);
+              const len = binStr.length;
+              const bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = binStr.charCodeAt(i);
+              }
+              mod.FS.writeFile(targetPath, bytes);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
   let checkStage: StageResult = { success: false, exitCode: -1, stdout: "", stderr: "" };
   let transpileStage: StageResult | undefined;
   let dumpStage: StageResult | undefined;
@@ -124,18 +174,24 @@ export async function compileGoose(
   let astDump = "";
 
   try {
-    // Write source file(s) to virtual filesystem
+    // Mount blessed external packages (gfx, audio, ui, physics) into virtual package cache
+    mountBlessedPackages();
+
+    // Write source file(s) to virtual filesystem with parent directory creation
     if (options.files && Object.keys(options.files).length > 0) {
       for (const [filePath, content] of Object.entries(options.files)) {
         const normalized = filePath.startsWith("/") ? filePath : `/${filePath}`;
+        ensureParentDirs(normalized);
         mod.FS.writeFile(normalized, content);
         writtenFiles.push(normalized);
       }
       if (!options.files[entryFile] && !options.files[entryFile.replace(/^\//, "")]) {
+        ensureParentDirs(entryFile);
         mod.FS.writeFile(entryFile, source);
         writtenFiles.push(entryFile);
       }
     } else {
+      ensureParentDirs(entryFile);
       mod.FS.writeFile(entryFile, source);
       writtenFiles.push(entryFile);
     }
@@ -187,7 +243,22 @@ export async function compileGoose(
       } catch (parseErr: any) {
         checkStage.error = (checkStage.error ? `${checkStage.error}; ` : "") +
           `Failed to parse diagnostics JSON: ${parseErr?.message || String(parseErr)}`;
+        checkStage.success = false;
+        diagnostics.push({
+          severity: "error",
+          message: `CompilerProtocolError: Malformed diagnostics payload: ${parseErr?.message || String(parseErr)}`,
+          line: 1,
+          col: 1,
+        });
       }
+    } else if (checkStdout.trim().length > 0 && !checkSuccess) {
+      // Diagnostic was emitted in non-JSON format or check failed without valid JSON array
+      diagnostics.push({
+        severity: "error",
+        message: `Compiler check failed: ${checkStderr.trim() || checkStdout.trim()}`,
+        line: 1,
+        col: 1,
+      });
     }
 
     if (checkError && diagnostics.length === 0) {

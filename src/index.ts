@@ -8,3 +8,5 @@ export * from "./engine";
 export * from "./renderer";
 export * from "./gooseGfx";
 export * from "./gooseExecutor";
+export * from "./runtime/compiledRunner";
+export * from "./runtime/game.worker";

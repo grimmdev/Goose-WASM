@@ -171,15 +171,25 @@ if (fs.existsSync(linterDist)) {
 
     // Test F3: compileGoose syntax error handling
     const errRes = await compileGoose(mod, 'import std;\nfn main() { INVALID SYNTAX !!! }\n');
-    console.log("errRes diagnostics:", errRes.diagnostics);
-    console.log("errRes stdout:", JSON.stringify(errRes.stdout));
-    console.log("errRes stderr:", JSON.stringify(errRes.stderr));
     assert.strictEqual(errRes.success, false, "Syntax error program should fail");
     assert.ok(errRes.diagnostics.length > 0, "Diagnostics should capture syntax error");
     assert.strictEqual(errRes.stages.check.success, false, "Check stage should report failure");
-    console.log("✓ Error diagnostics and stage failure reporting verified");
+    console.log("✓ Error diagnostics and stage failure reporting verified\n");
 
-    console.log("=== All Tests Passed Successfully! ===");
+    // Test G: Native Semantic Probes & Official Compiled Demos
+    const { runSemanticsTests } = require('../tests/semantics.test.cjs');
+    await runSemanticsTests();
+
+    const { runCubeTest } = require('../tests/cube.test.cjs');
+    await runCubeTest();
+
+    const { runUiTodoTest } = require('../tests/ui_todo.test.cjs');
+    await runUiTodoTest();
+
+    const { runPhysicsBoxesTest } = require('../tests/physics_boxes.test.cjs');
+    await runPhysicsBoxesTest();
+
+    console.log("=== All Tests & Demo Acceptance Passed Successfully! ===");
   }).catch((err) => {
     console.error("Linter test error:", err);
     process.exit(1);
